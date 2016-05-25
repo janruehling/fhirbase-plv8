@@ -229,6 +229,9 @@ To build search query we need to
         if expr.page != null
           hsql.offset = (expr.count || DEFAULT_RESOURCES_PER_PAGE) * expr.page
 
+        if expr.offset != null
+          hsql.offset = expr.offset
+
         if expr.joins
           hsql.join = lang.mapcat expr.joins, (x)->
             mk_join(plv8, alias, next_alias, x)
