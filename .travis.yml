@@ -3,7 +3,7 @@ sudo: required
 services:
 - docker
 node_js:
-- '0.12'
+- '6'
 addons:
   apt:
     packages:
@@ -43,15 +43,17 @@ after_success: |
     cd perf/provisioning || exit 1
     export ANSIBLE_HOST_KEY_CHECKING=False || exit 1
     python2 ~/.local/bin/ansible-playbook \
-            --inventory inventories/ec2 \
+            --inventory-file=inventories/ec2 \
             ec2_start.yml || exit 1
     python2 ~/.local/bin/ansible-playbook \
             --private-key=secure/fhirbase_performance_benchmark.pem \
-            --inventory=inventories/amazon \
+            --inventory-file=inventories/ec2.py \
+            --user=ubuntu \
             bootstrap.yml || exit 1
     python2 ~/.local/bin/ansible-playbook \
             --private-key=secure/fhirbase_performance_benchmark.pem \
-            --inventory=inventories/amazon \
+            --inventory-file=inventories/ec2.py \
+            --user=ubuntu \
             --extra-vars="timestamp=foobar" \
             perf.yml || exit 1
   fi

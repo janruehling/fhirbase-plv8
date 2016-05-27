@@ -24,13 +24,13 @@ export DATABASE_URL=postgres://fhirbase:fhirbase@localhost:5432/fhirbase || exit
 
 sudo service postgresql start || exit 1
 cd ~/fhirbase || exit 1
-source ~/.nvm/nvm.sh && nvm use 5.3 || exit 1
+source ~/.nvm/nvm.sh && nvm use 6.2.0 || exit 1
 
 for schema in $schemas; do
     if [ "$install_fhirbase" = 1 ] ; then
         FB_SCHEMA=$schema ./build.sh || exit 1
         { echo "CREATE SCHEMA IF NOT EXISTS $schema; SET search_path TO $schema;" \
-          && cat tmp/build.sql ; } \
+          && cat build/latest/build.sql ; } \
           | psql fhirbase
         [[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
     fi

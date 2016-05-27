@@ -1,5 +1,5 @@
 fs = require('fs')
-plv8 = require('../plpl/src/plv8')
+plv8 = {} # HACK to make it do not require connection require('../plpl/src/plv8')
 sql = require('../src/honey')
 schema = require('../src/core/schema')
 
@@ -80,11 +80,12 @@ CREATE AGGREGATE FIRST (
 is_first = true
 
 console.log "INSERT INTO  metadata_with_dups (resource) VALUES "
+#.replace(/\{"/g, '{ "').replace(/\.(participation|role)\{/g, '$1[')
 for bundle in bundles
   for entry in bundle.entry when entry.resource
     resource = entry.resource
     comma = if is_first then "" else ","
-    console.log comma, "($JSON$#{JSON.stringify(resource)}$JSON$)"
+    console.log comma, "( $JSON$ #{JSON.stringify(resource)} $JSON$ )"
     is_first = false
 
 console.log ";"

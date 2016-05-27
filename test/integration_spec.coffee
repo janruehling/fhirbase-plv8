@@ -474,19 +474,18 @@ describe 'Integration',->
         })]
       )
 
-    describe 'search by', ->
-      it 'identifier', ->
-        searched =
-          JSON.parse(
-            plv8.execute(
-              'SELECT fhir_search($1)',
-              [JSON.stringify(
-                resourceType: 'Order',
-                queryString: 'identifier=foo'
-              )]
-            )[0].fhir_search
-          )
-        assert.equal(searched.total, 1)
+    it 'search by identifier', ->
+      searched =
+        JSON.parse(
+          plv8.execute(
+            'SELECT fhir_search($1)',
+            [JSON.stringify(
+              resourceType: 'Order',
+              queryString: 'identifier=foo'
+            )]
+          )[0].fhir_search
+        )
+      assert.equal(searched.total, 1)
 
     it 'index', ->
       indexed =
@@ -520,6 +519,50 @@ describe 'Integration',->
         )[0].fhir_explain_search
 
       assert.equal(explained, 1)
+
+    it 'pagination', ->
+      plv8.execute('''
+        SELECT fhir_create_storage('{"resourceType": "Patient"}');
+      ''')
+
+      plv8.execute('''
+        SELECT fhir_truncate_storage('{"resourceType": "Patient"}');
+      ''')
+
+      for _ in [1..11]
+        plv8.execute('''
+          SELECT fhir_create_resource(' {"resource": {"resourceType": "Patient"}} ');
+        ''')
+
+      outcome1 =
+        JSON.parse(
+          plv8.execute('''
+            SELECT fhir_search('
+              {"resourceType": "Patient", "queryString": ""}
+            ');
+          ''')[0].fhir_search
+        )
+      assert.equal(outcome1.entry.length, 10)
+
+      outcome2 =
+        JSON.parse(
+          plv8.execute('''
+            SELECT fhir_search('
+              {"resourceType": "Patient", "queryString": "_count=3"}
+            ');
+          ''')[0].fhir_search
+        )
+      assert.equal(outcome2.entry.length, 3)
+
+      outcome3 =
+        JSON.parse(
+          plv8.execute('''
+            SELECT fhir_search('
+              {"resourceType": "Patient", "queryString": "_count=999"}
+            ');
+          ''')[0].fhir_search
+        )
+      assert.equal(outcome3.entry.length, 11)
 
   describe 'Transaction', ->
     before ->
@@ -588,7 +631,7 @@ describe 'Integration',->
           {
             request:
               method: 'GET'
-              url: '/Patient/patient-to-delete-id'
+              url: '/Patient?_id=patient-to-delete-id'
           }
           # GET (search) also should processed last <http://hl7-fhir.github.io/http.html#2.1.0.16.2>
           {
@@ -650,12 +693,188 @@ describe 'Integration',->
       assert.equal(transaction.entry[2].id, 'patient-to-update-id')
       assert.equal(transaction.entry[2].name[0].family[0], 'Name to update updated')
 
-      assert.equal(transaction.entry[3].resourceType, 'OperationOutcome')
-      assert.equal(transaction.entry[3].issue[0].code, 'not-found')
-      assert.equal(transaction.entry[3].issue[0].details.coding[0].display, 'The resource "patient-to-delete-id" has been deleted')
+      assert.equal(transaction.entry[3].resourceType, 'Bundle')
+      assert.equal(transaction.entry[3].type, 'searchset')
+      assert.equal(transaction.entry[3].link[0].url, '/Patient?_id=patient-to-delete-id&_page=0')
+      assert.equal(transaction.entry[3].total, 0)
 
       assert.equal(transaction.entry[4].resourceType, 'Bundle')
       assert.equal(transaction.entry[4].type, 'searchset')
       assert.equal(transaction.entry[4].total, 1)
       assert.equal(transaction.entry[4].entry[0].resource.resourceType, 'Patient')
       assert.equal(transaction.entry[4].entry[0].resource.name[0].family[0], 'Name to create')
+
+    it "should create with ID and respects ID's references", ->
+      plv8.execute(
+        'SELECT fhir_create_storage($1)',
+        [JSON.stringify(resourceType: 'Practitioner')]
+      )
+
+      bundle =
+        resourceType: 'Bundle'
+        id: 'bundle-transaction-id'
+        type: 'transaction'
+        entry: [
+          {
+            resource:
+              resourceType: 'Practitioner'
+            request:
+              method: 'PUT'
+              url: '/Practitioner/created-and-referenced-id'
+          }
+          {
+            resource:
+              resourceType: 'Patient'
+              careProvider: [
+                {reference: '/Practitioner/created-and-referenced-id'}
+              ]
+            request:
+              method: 'PUT'
+              url: '/Patient/patient-to-update-id'
+          }
+          {
+            request:
+              method: 'GET'
+              url: '/Patient?_id=patient-to-update-id&_include=careprovider'
+          }
+        ]
+
+      transaction =
+        JSON.parse(
+          plv8.execute(
+            'SELECT fhir_transaction($1)',
+            [JSON.stringify(bundle)]
+          )[0].fhir_transaction
+        )
+
+      assert.equal(transaction.entry[2].total, 1)
+      assert.equal(
+        transaction.entry[2].entry.filter((resource)->
+          resource.resource.resourceType == 'Practitioner'
+        )[0].resource.id,
+        'created-and-referenced-id'
+      )
+
+    it 'narus transaction', ->
+      plv8.execute('''
+        SELECT fhir_create_storage('{"resourceType": "Patient"}');
+      ''')
+
+      plv8.execute('''
+        SELECT fhir_create_storage('{"resourceType": "Practitioner"}');
+      ''')
+
+      plv8.execute('''
+        SELECT fhir_create_resource('
+          {
+            "allowId": true,
+            "resource": {"id": "patient-id", "resourceType": "Patient"}
+          }
+        ');
+      ''')
+
+      transaction =
+        JSON.parse(
+          plv8.execute('''
+            SELECT fhir_transaction('
+              {
+                "resourceType": "Bundle",
+                "type": "transaction",
+                "entry": [
+                  {
+                    "resource": {
+                      "resourceType": "Practitioner"
+                    },
+                    "request": {
+                      "method": "PUT",
+                      "url": "/Practitioner/practitioner-id"
+                    }
+                  },
+                  {
+                    "resource": {
+                      "resourceType": "Patient",
+                      "careProvider": [
+                        {
+                          "reference": "/Practitioner/practitioner-id"
+                        }
+                      ]
+                    },
+                    "request": {
+                      "method": "PUT",
+                      "url": "/Patient/patient-id"
+                    }
+                  },
+                  {
+                    "request": {
+                      "method": "GET",
+                      "url": "/Patient?_id=patient-id&_include=careprovider"
+                    }
+                  }
+                ]
+              }
+            ');
+          ''')[0].fhir_transaction
+        )
+
+      assert.equal(transaction.entry[2].total, 1)
+      assert.equal(
+        transaction.entry[2].entry.filter((resource)->
+          resource.resource.resourceType == 'Practitioner'
+        )[0].resource.id,
+        'practitioner-id'
+      )
+
+    it 'should rollback (#112)', ->
+      plv8.execute('''SELECT fhir_create_storage('{"resourceType": "Patient"}');''')
+      plv8.execute('''SELECT fhir_truncate_storage('{"resourceType": "Patient"}');''')
+
+      plv8.execute('''
+        SELECT fhir_create_resource('
+          {
+            "allowId": true,
+            "resource": {
+              "id": "id1",
+              "resourceType": "Patient",
+              "name": [{"given": ["Patient 1"]}]
+            }
+          }
+        ');
+      ''')
+
+      transaction =
+        JSON.parse(
+          plv8.execute('''
+            SELECT fhir_transaction('
+              {
+                "type": "transaction",
+                "id": "bundle-transaction",
+                "resourceType": "Bundle",
+                "entry": [
+                  {
+                    "request": {
+                      "url": "\/Patient\/id1",
+                      "method": "DELETE"
+                    }
+                  },
+                  {
+                    "request": {
+                      "url": "\/Patient\/id2",
+                      "method": "DELETE"
+                    }
+                  }
+                ]
+              }
+            ');
+          ''')[0].fhir_transaction
+        )
+
+      search =
+        JSON.parse(
+          plv8.execute('''
+            SELECT fhir_search('
+              {"resourceType": "Patient", "queryString": "_id=id1"}
+            ');
+          ''')[0].fhir_search
+        )
+
+      assert.equal(search.entry.length, 1)

@@ -3,14 +3,13 @@ search = require('./search')
 
 RES_TYPE_RE = "([A-Za-z]+)"
 ID_RE = "([A-Za-z0-9\\-]+)"
-QUERY_STRING_RE = "([A-Za-z0-9 &=-]+)"
+QUERY_STRING_RE = "([A-Za-z0-9 &=_-]+)"
 
 strip = (obj)->
   res = {}
   for k,v of obj when v
     res[k] = v
   res
-
 
 HANDLERS = [
   {
@@ -60,6 +59,7 @@ HANDLERS = [
         ifNoneExist: entry.request.ifNoneExist
         resource: entry.resource
         resourceType: match[1]
+        fullUrl: entry.fullUrl
   }
   {
     name: 'History'
@@ -106,7 +106,7 @@ makePlan = (bundle) ->
       type: 'error'
       message: "Cannot determine action for request #{method} #{url}"
 
-  plan.sort((a, b)->
+  plan.sort (a, b)->
     # Transaction should processed in order (DELETE, POST, PUT, GET).
 
     number = (action)->
@@ -128,15 +128,43 @@ makePlan = (bundle) ->
       return 1
 
     0
-  )
 
 exports.makePlan = makePlan
 
+replaceReferences = (resource, replacements) ->
+  if resource == null || resource == undefined
+    null
+  else if Array.isArray(resource)
+    resource.map (i) -> replaceReferences(i, replacements)
+  else if typeof(resource) == "object"
+    if resource.reference && typeof(resource.reference) == "string" && replacements[resource.reference]
+      result = resource
+      result.reference = replacements[resource.reference]
+    else
+      result = {}
+      for k, v of resource
+        result[k] = replaceReferences(v, replacements)
+
+    result
+  else
+    resource
+
 executePlan = (plv8, plan) ->
+  idReplacements = {}
+
   plan.map (action) ->
+    if action.resource
+      action.resource = replaceReferences(action.resource, idReplacements)
+
     switch action.type
       when "create"
-        crud.fhir_create_resource(plv8, action)
+        result = crud.fhir_create_resource(plv8, action)
+
+        if result && result.resourceType != "OperationOutcome" && action.fullUrl
+          idReplacements[action.fullUrl] = "/" + result.resourceType + "/" + result.id
+
+        result
+
       when "update"
         action.resource.id = action.resource.id || (!action.queryString && action.id)
         crud.fhir_update_resource(plv8, action)
@@ -163,17 +191,42 @@ execute = (plv8, bundle, strictMode) ->
     if errors.length > 0
       return {
         resourceType: "OperationOutcome"
-        message: "There were incorrect requests within transaction. #{JSON.stringify(errors)}"
+        message: 'Transaction was rollbacked.' +
+          ' There were incorrect requests within transaction: ' +
+          JSON.stringify(errors)
       }
 
-  result = executePlan(plv8, plan)
+  wasRollbacked = false
+  try
+    result = #not assigning( because plv8 not return from `subtransaction` function( <http://pgxn.org/dist/plv8/doc/plv8.html#Subtransaction>
+      plv8.subtransaction(->
+        r = executePlan(plv8, plan)
 
-  resourceType: "Bundle"
-  type: 'transaction-response'
-  entry: result
+        shouldRollback = false
+        for resource in r
+          if resource.resourceType == 'OperationOutcome'
+            shouldRollback = true
+            break
+
+        if shouldRollback
+          throw new Error('Transaction should rollback')
+
+        r
+      )
+  catch e
+    wasRollbacked = true
+
+  if wasRollbacked
+    resourceType: 'OperationOutcome'
+    message: 'Transaction was rollbacked.' +
+      ' There were incorrect requests within transaction: ' +
+      JSON.stringify(result) #not assigned( because plv8 not return from `subtransaction` function( <http://pgxn.org/dist/plv8/doc/plv8.html#Subtransaction>
+  else
+    resourceType: "Bundle"
+    type: 'transaction-response'
+    entry: result
 
 exports.execute = execute
-
 
 exports.fhir_transaction = (plv8, bundle)-> execute(plv8, bundle, true)
 
