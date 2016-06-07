@@ -10,6 +10,11 @@ exports.getter = (plv8, rt, query)->
       select: sql.raw('*')
       from: sql.q(tbl_name)
       where: {"resource->>'name'": query.name }
+  else if rt = "SearchParameter"
+    utils.exec plv8,
+      select: sql.raw('*')
+      from: sql.q(tbl_name)
+      where: {"resource->>'name'": query.name.split(".")[0], "resource->>'base'": query.base}
   else
     utils.exec plv8,
       select: sql.raw('*')
