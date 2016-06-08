@@ -217,11 +217,20 @@ To build search query we need to
         if expr.sort
           ordering = order_hsql(alias, expr.sort)
 
-        hsql =
-          select: ':*'
-          from: ['$alias', ['$q', "#{namings.table_name(plv8, expr.query)}"], alias]
-          where: expr.where
-          order: ordering
+        if expr.sort && is_nested_order(expr.sort)
+          nested_order_query = get_nested_order_query(expr, alias)
+          hsql =
+            select: nested_order_query.select,
+            from: nested_order_query.from,
+            join: nested_order_query.join,
+            where: nested_order_query.where,
+            order: ordering
+        else
+          hsql =
+            select: ':*'
+            from: ['$alias', ['$q', "#{namings.table_name(plv8, expr.query)}"], alias]
+            where: expr.where
+            order: ordering
 
         if expr.count != null || expr.page != null
           hsql.limit = expr.count || DEFAULT_RESOURCES_PER_PAGE
@@ -270,6 +279,37 @@ implementation based on searchType
         unless h.order_expression
           throw new Error("Search type does not exports order_expression fn: [#{meta.searchType}] #{JSON.stringify(meta)}")
         h.order_expression(tbl, meta)
+
+    is_nested_order = (params)->
+      for meta in params.map((x)-> x[1])
+        name = meta.name
+        if name.split(".").length > 1
+          return true
+      return false
+
+    nested_table = (params)->
+      for meta in params.map((x)-> x[1])
+        name = meta.name
+        if name.split(".").length > 1
+          return name.split(".")[0]
+
+    get_nested_order_query = (expr, alias)->
+        nested_table_name = nested_table(expr.sort)
+        table_name = namings.table_name(plv8, expr.query)
+        if table_name == "appointment"
+            {
+                select: ":#{table_name}.*",
+                from: ['$raw', "(SELECT split_part((json_array_elements((\"#{table_name}\".resource->'participant')::json)->'actor'->>'reference')::text, '/', 2)::text as subelem_id, \"#{table_name}\".* FROM \"#{table_name}\") AS #{table_name}"],
+                join: [[["$raw", "#{nested_table_name} AS #{alias}"],["$raw", "#{alias}.id = subelem_id"]]],
+                where: expr.where
+            }
+        else if table_name == "encounter"
+            {
+                select: ":#{table_name}.*",
+                from: ['$alias', ['$q', "#{nested_table_name}"], alias],
+                join: [["#{table_name}", "#{alias}.id=split_part((\"#{table_name}\".resource->'#{nested_table_name}'->>'reference'), '/', 2)"]],
+                where: expr.where
+            }
 
 
 ###  Handling chained parameters

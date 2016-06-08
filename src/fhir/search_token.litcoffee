@@ -30,7 +30,7 @@ PostgreSQL implementation is based on arrays support - http://www.postgresql.org
       'date'
     ]
 
-    sf = search_common.get_search_functions({extract:'fhir_extract_as_token', sort:'fhir_sort_as_token',SUPPORTED_TYPES:SUPPORTED_TYPES})
+    sf = search_common.get_search_functions({extract:'fhir_extract_as_token', sort:'fhir_sort_as_token', SUPPORTED_TYPES:SUPPORTED_TYPES})
     extract_expr = sf.extract_expr
 
     exports.order_expression = sf.order_expression
@@ -74,11 +74,16 @@ PostgreSQL implementation is based on arrays support - http://www.postgresql.org
       else if element_type == 'Reference'
         for ref in data
           res.push(ref.reference)
+      else if element_type == 'ReferenceUid'
+        for ref in data
+          res.push(ref.reference.split("/")[1])
+      else if element_type == 'ReferenceUidTxt'
+        for ref in data
+          res = ref.reference.split("/")[1]
       else
         throw new Error("fhir_extract_as_token: Not implemented for #{element_type}")
 
       # console.log("!!!! #{resource.id} #{JSON.stringify(data)} #{JSON.stringify(path)} => #{JSON.stringify(res)} (#{element_type})")
-
 
       if res.length == 0
         ['$NULL']

@@ -17,6 +17,7 @@ Only equality operator is implemented.
     xpath = require('./xpath')
     lang = require('../lang')
     search_token = require('./search_token')
+    search_nested = require('./search_nested')
 
     TODO = -> throw new Error("TODO")
 
@@ -109,7 +110,10 @@ Only equality operator is implemented.
       op(tbl, meta, value)
 
     exports.order_expression = (tbl, meta)->
-      search_token.order_expression(tbl, meta)
+      if meta.name.split(".").length>1
+        search_nested.order_expression(tbl, meta)
+      else
+        search_token.order_expression(tbl, meta)
 
     exports.index = (plv8, metas)->
       meta = metas[0]
