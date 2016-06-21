@@ -55,6 +55,10 @@ appropriate elements from resource by path
 
     DEFAULT_RESOURCES_PER_PAGE = 10
 
+    special_resource_types = {
+      "practitioner"  : "'participant'",
+      "location" : "'location'->0->'location'"
+    }
 This is main function:
 
 @param query [Object]
@@ -293,23 +297,50 @@ implementation based on searchType
         if name.split(".").length > 1
           return name.split(".")[0]
 
+    resource_type = (table_name)->
+      if special_resource_types[table_name]
+        return special_resource_types[table_name]
+      return "'"+table_name+"'"
+
+    build_join_part = (table, nested_table, alias)->
+      switch table
+        when "appointment"
+          return [[['$raw', "#{nested_table} AS #{alias}"],['$raw', "#{alias}.id = subelem_id"]]]
+        when "encounter"
+          resource = resource_type(nested_table)
+          if resource == "'participant'"
+            return [[['$raw', "#{nested_table} AS #{alias}"],['$raw', "#{alias}.id = subelem_id"]]]
+          else
+            return [[['$raw', "#{table}"], ['$raw', "#{alias}.id=split_part((\"#{table}\".resource->#{resource}->>'reference'), '/', 2)"]]]
+
+    build_from_part = (table, nested_table, alias)->
+      switch table
+        when "appointment"
+          return ['$raw', "(SELECT split_part((json_array_elements((\"#{table}\".resource->'participant')::json)->'actor'->>'reference')::text, '/', 2)::text as subelem_id, \"#{table}\".* FROM \"#{table}\") AS #{table}"]
+        when "encounter"
+          resource = resource_type(nested_table)
+          if resource == "'participant'"
+            return ['$raw', "(SELECT split_part((json_array_elements((\"#{table}\".resource->'participant')::json)->'individual'->>'reference')::text, '/', 2)::text as subelem_id, \"#{table}\".* FROM \"#{table}\") AS #{table}"]
+          else
+            return ['$alias', ['$q', "#{nested_table}"], alias]
+
     get_nested_order_query = (expr, alias)->
-        nested_table_name = nested_table(expr.sort)
-        table_name = namings.table_name(plv8, expr.query)
-        if table_name == "appointment"
-            {
-                select: ":#{table_name}.*",
-                from: ['$raw', "(SELECT split_part((json_array_elements((\"#{table_name}\".resource->'participant')::json)->'actor'->>'reference')::text, '/', 2)::text as subelem_id, \"#{table_name}\".* FROM \"#{table_name}\") AS #{table_name}"],
-                join: [[["$raw", "#{nested_table_name} AS #{alias}"],["$raw", "#{alias}.id = subelem_id"]]],
-                where: expr.where
-            }
-        else if table_name == "encounter"
-            {
-                select: ":#{table_name}.*",
-                from: ['$alias', ['$q', "#{nested_table_name}"], alias],
-                join: [["#{table_name}", "#{alias}.id=split_part((\"#{table_name}\".resource->'#{nested_table_name}'->>'reference'), '/', 2)"]],
-                where: expr.where
-            }
+      nested_table_name = nested_table(expr.sort)
+      table_name = namings.table_name(plv8, expr.query)
+      if table_name == "appointment"
+        {
+            select: ":#{table_name}.*",
+            from: build_from_part(table_name, nested_table_name, alias),
+            join: build_join_part(table_name, nested_table_name, alias),
+            where: expr.where
+        }
+      else if table_name == "encounter"
+        {
+            select: ":#{table_name}.*",
+            from: build_from_part(table_name, nested_table_name, alias),
+            join: build_join_part(table_name, nested_table_name, alias),
+            where: expr.where
+        }
 
 
 ###  Handling chained parameters
