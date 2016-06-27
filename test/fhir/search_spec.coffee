@@ -8,18 +8,12 @@ test = require('../helpers.coffee')
 
 assert = require('assert')
 
-# plv8.debug = true
 get_in = (obj, path)->
   cur = obj
   cur = cur[item] for item in path when cur
   cur
 
 match = (x)-> (y)-> y.indexOf(x) > -1
-
-# plv8.debug = true
-
-# console.log plv8.execute("SET search_path='user1';")
-# console.log plv8.execute("SHOW search_path;")
 
 FILTER = 'uri'
 FILTER = 'incl'
@@ -30,7 +24,6 @@ fs.readdirSync("#{__dirname}/search").filter(match(FILTER)).forEach (yml)->
   describe spec.title, ->
     before ->
       plv8.execute("SET plv8.start_proc = 'plv8_init'")
-      # plv8.debug = true
 
       for res in spec.resources
         schema.fhir_create_storage(plv8, resourceType: res)
@@ -56,9 +49,7 @@ fs.readdirSync("#{__dirname}/search").filter(match(FILTER)).forEach (yml)->
         plv8.execute "SET enable_seqscan = OFF;" if (q.indexed or q.indexed_order)
 
         res = search.fhir_search(plv8, q.query)
-        # console.log(JSON.stringify(res))
         explain = JSON.stringify(search.fhir_explain_search(plv8, q.query))
-        # console.log(JSON.stringify(search.fhir_search_sql(plv8, q.query)))
 
         plv8.execute "SET enable_seqscan = ON;" if (q.indexed or q.indexed_order)
 
@@ -73,8 +64,6 @@ fs.readdirSync("#{__dirname}/search").filter(match(FILTER)).forEach (yml)->
             assert.equal(get_in(res, probe.path), undefined)
           else
             assert.equal(get_in(res, probe.path), probe.result)
-
-        # console.log(explain)
 
         if q.indexed
           assert(explain.indexOf("Index Cond") > -1, "Should be indexed but #{explain}")
