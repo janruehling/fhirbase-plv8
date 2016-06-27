@@ -247,10 +247,10 @@ To build search query we need to
         if expr.count != null || expr.page != null
           hsql.limit = expr.count || DEFAULT_RESOURCES_PER_PAGE
 
-        if expr.page != null
+        if expr.page?
           hsql.offset = (expr.count || DEFAULT_RESOURCES_PER_PAGE) * expr.page
 
-        if expr.offset != null
+        if expr.offset?
           hsql.offset = expr.offset
 
         if expr.joins
@@ -397,11 +397,11 @@ we just strip limit, offset, order and rewrite select clause:
       q
 
     get_count = (plv8, honey, query_obj) ->
-      if !query_obj.total_method || query_obj.total_method is "std"
-        query_obj.total_method = "std"
+      if !query_obj.total_method || query_obj.total_method is "exact"
+        query_obj.total_method = "exact"
 
         utils.exec(plv8, countize_query(honey))[0].count
-      else if query_obj.total_method is "improved"
+      else if query_obj.total_method is "estimated"
         sql_query= sql(honey)
         query = sql_query[0].replace /\$(\d+)/g, (match, number) ->
             if typeof sql_query[number] is "string"
@@ -416,7 +416,7 @@ we just strip limit, offset, order and rewrite select clause:
         tmp = plv8.execute(query)
         tmp[0].count_estimate
       else
-        throw new Error("Invalid value of totalMethod. only 'std', 'improved' and 'no' allowed.")
+        throw new Error("Invalid value of totalMethod. only 'exact', 'estimated' and 'no' allowed.")
 
 We cache FHIR meta-data index per connection using plv8 object:
 
