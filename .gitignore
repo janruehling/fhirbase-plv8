@@ -1,9 +1,10 @@
 *sw?
+/build
 /node_modules
 /perf/provisioning/secure/*
 /provisioning/secure/*
 /releases
-/tmp
+/secure
+/secure.tar.gz
 /vagrant/.vagrant
 npm-debug.log
-build/
