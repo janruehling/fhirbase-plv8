@@ -3,6 +3,7 @@ assert = require('assert')
 
 copy = (x)-> JSON.parse(JSON.stringify(x))
 
+
 describe 'Integration',->
   before ->
     plv8.execute("SET plv8.start_proc = 'plv8_init'")
@@ -24,10 +25,26 @@ describe 'Integration',->
       1
     )
 
-  it 'fhirbase version', ->
+  it 'FHIR version', ->
+    version = plv8.execute("SELECT fhir_version()")[0].fhir_version
+    assert.equal(
+      !!version.match(/.*[0-9]*\.[0-9]*\.[0-9].*/),
+      true
+    )
+
+  it 'Fhirbase version', ->
     version = plv8.execute("SELECT fhirbase_version()")[0].fhirbase_version
     assert.equal(
       !!version.match(/.*[0-9]*\.[0-9]*\.[0-9].*/),
+      true
+    )
+
+  it 'Fhirbase release date', ->
+    version = plv8.execute("SELECT fhirbase_release_date()")[0]
+      .fhirbase_release_date
+
+    assert.equal(
+      !!version.match(/-?[0-9]{4}(-(0[1-9]|1[0-2])(-(0[0-9]|[1-2][0-9]|3[0-1])(T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]+)?(Z|(\+|-)((0[0-9]|1[0-3]):[0-5][0-9]|14:00)))?)?)?/),
       true
     )
 
@@ -62,6 +79,17 @@ describe 'Integration',->
         1
       )
 
+    it 'create all', ->
+      this.timeout(15000) # creating all storage takes longer time than default 2000 milliseconds <https://mochajs.org/#timeouts>
+      plv8.execute('SELECT fhir_create_all_storages()')
+      assert.equal(
+        plv8.execute('''
+          SELECT * from information_schema.tables
+          WHERE table_name = 'order' AND table_schema = current_schema()
+        ''').length,
+        1
+      )
+
     it 'drop', ->
       plv8.execute(
         'SELECT fhir_drop_storage($1)',
@@ -78,6 +106,16 @@ describe 'Integration',->
         plv8.execute('''
           SELECT * from information_schema.tables
           WHERE table_name = 'order_history' AND table_schema = current_schema()
+        ''').length,
+        0
+      )
+
+    it 'drop all', ->
+      plv8.execute('SELECT fhir_drop_all_storages()')
+      assert.equal(
+        plv8.execute('''
+          SELECT * from information_schema.tables
+          WHERE table_name = 'order' AND table_schema = current_schema()
         ''').length,
         0
       )
@@ -339,11 +377,10 @@ describe 'Integration',->
 
       assert.equal(hx.total, 3)
       assert.equal(hx.entry.length, 3)
-      assert.deepEqual(hx.entry.map((entry) -> entry.request), [
-        {'url': 'Order', 'method': 'POST'},
-        {'url': 'Order', 'method': 'PUT'},
-        {'url': 'Order', 'method': 'DELETE'}
-      ])
+      assert.deepEqual(
+        hx.entry.map((entry) -> entry.request.method),
+        ['DELETE', 'PUT', 'POST']
+      )
 
     it 'resource type', ->
       plv8.execute(
@@ -396,13 +433,10 @@ describe 'Integration',->
 
       assert.equal(hx.total, 5)
 
-      assert.deepEqual(hx.entry.map((entry) -> entry.request), [
-        {'url': 'Order', 'method': 'POST'},
-        {'url': 'Order', 'method': 'POST'},
-        {'url': 'Order', 'method': 'POST'},
-        {'url': 'Order', 'method': 'PUT'},
-        {'url': 'Order', 'method': 'DELETE'}
-      ])
+      assert.deepEqual(
+        hx.entry.map((entry) -> entry.request.method),
+        ['DELETE', 'PUT', 'POST', 'POST', 'POST']
+      )
 
   describe 'Search API', ->
     before ->
@@ -441,19 +475,18 @@ describe 'Integration',->
         })]
       )
 
-    describe 'search by', ->
-      it 'identifier', ->
-        searched =
-          JSON.parse(
-            plv8.execute(
-              'SELECT fhir_search($1)',
-              [JSON.stringify(
-                resourceType: 'Order',
-                queryString: 'identifier=foo'
-              )]
-            )[0].fhir_search
-          )
-        assert.equal(searched.total, 1)
+    it 'search by identifier', ->
+      searched =
+        JSON.parse(
+          plv8.execute(
+            'SELECT fhir_search($1)',
+            [JSON.stringify(
+              resourceType: 'Order',
+              queryString: 'identifier=foo'
+            )]
+          )[0].fhir_search
+        )
+      assert.equal(searched.total, 1)
 
     it 'index', ->
       indexed =
@@ -487,3 +520,47 @@ describe 'Integration',->
         )[0].fhir_explain_search
 
       assert.equal(explained, 1)
+
+    it 'pagination', ->
+      plv8.execute('''
+        SELECT fhir_create_storage('{"resourceType": "Patient"}');
+      ''')
+
+      plv8.execute('''
+        SELECT fhir_truncate_storage('{"resourceType": "Patient"}');
+      ''')
+
+      for _ in [1..11]
+        plv8.execute('''
+          SELECT fhir_create_resource(' {"resource": {"resourceType": "Patient"}} ');
+        ''')
+
+      outcome1 =
+        JSON.parse(
+          plv8.execute('''
+            SELECT fhir_search('
+              {"resourceType": "Patient", "queryString": ""}
+            ');
+          ''')[0].fhir_search
+        )
+      assert.equal(outcome1.entry.length, 10)
+
+      outcome2 =
+        JSON.parse(
+          plv8.execute('''
+            SELECT fhir_search('
+              {"resourceType": "Patient", "queryString": "_count=3"}
+            ');
+          ''')[0].fhir_search
+        )
+      assert.equal(outcome2.entry.length, 3)
+
+      outcome3 =
+        JSON.parse(
+          plv8.execute('''
+            SELECT fhir_search('
+              {"resourceType": "Patient", "queryString": "_count=999"}
+            ');
+          ''')[0].fhir_search
+        )
+      assert.equal(outcome3.entry.length, 11)

@@ -1,0 +1,171 @@
+#! /bin/bash
+
+export verbose=${verbose:-1}
+
+export script_directory=$(dirname $0)
+export data_directory=${data_directory:-/fhirbase/perf/data}
+
+export PGHOST=${PGHOST:-localhost}
+export PGPORT=${PGPORT:-5432}
+export PGDATABASE=${PGDATABASE:-fhirbase}
+export PGUSER=${PGUSER:-fhirbase}
+export PGPASSWORD=${PGPASSWORD:-your_password}
+
+export pg_schema=${pg_schema:-public}
+export other_database=${other_database:-postgres}
+
+export number_of_patients=${number_of_patients:-1000}
+export number_of_practitioners=${number_of_practitioners:-200}
+export rand_seed=${rand_seed:-0.21}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --verbose)
+            let verbose=2
+            ;;
+        --verbose=*)
+            let verbose="${1#*=}"
+            ;;
+        --data-directory=*)
+            export data_directory="${1#*=}"
+            ;;
+        --dropdb)
+            dropdb=1
+            ;;
+        --createdb)
+            createdb=1
+            ;;
+        --pghost=*)
+            export PGHOST="${1#*=}"
+            ;;
+        --pgport=*)
+            export PGPORT="${1#*=}"
+            ;;
+        --pgdatabase=*)
+            export PGDATABASE="${1#*=}"
+            ;;
+        --pguser=*)
+            export PGUSER="${1#*=}"
+            ;;
+        --pgpassword=*)
+            export PGPASSWORD="${1#*=}"
+            ;;
+        --pgschema=*)
+            export pg_schema="${1#*=}"
+            ;;
+        --other-database=*)
+            export other_database="${1#*=}"
+            ;;
+        --number-of-patients=*)
+            export number_of_patients="${1#*=}"
+            ;;
+        --number-of-practitioners=*)
+            export number_of_practitioners="${1#*=}"
+            ;;
+        --rand-seed=*)
+            export rand_seed="${1#*=}"
+            ;;
+        *)
+            printf "***************************\n"
+            printf "* Error: Invalid argument.*\n"
+            printf "***************************\n"
+            exit 1
+    esac
+    shift
+done
+
+if [[ $verbose -lt 2 ]] ; then
+    exec > /dev/null
+fi
+
+if [[ $verbose -eq 3 ]] ; then
+    echo "data_directory=$data_directory"
+
+    echo "PGHOST=$PGHOST"
+    echo "PGDATABASE=$PGDATABASE"
+    echo "PGPORT=$PGPORT"
+    echo "PGUSER=$PGUSER"
+    echo "PGPASSWORD=$PGPASSWORD"
+
+    echo "pg_schema=$pg_schema"
+    echo "other_database=$other_database"
+
+    echo "number_of_patients=$number_of_patients"
+    echo "rand_seed=$rand_seed"
+fi
+
+if [ "$createdb" = 1 ] ; then
+    if [ "$dropdb" = 1 ] ; then
+        echo Drop $PGDATABASE database.
+        read -r -d '' sql << EOF
+DROP DATABASE IF EXISTS $PGDATABASE;
+EOF
+        echo "$sql" | psql $other_database || exit 1
+    fi
+
+    echo Crate $PGDATABASE database.
+    read -r -d '' sql << EOF
+CREATE DATABASE $PGDATABASE WITH OWNER $PGUSER ENCODING = 'UTF8';
+EOF
+    echo "$sql" | psql $other_database || exit 1
+
+    echo Crate $PGDATABASE.$pg_schema schema.
+    read -r -d '' sql << EOF
+CREATE SCHEMA IF NOT EXISTS $pg_schema;
+EOF
+    echo "$sql" | psql || exit 1
+
+    echo Install Fhirbase into $PGDATABASE.$pg_schema database.
+    { echo "SET search_path TO $pg_schema;" \
+      && curl --location \
+              https://github.com/fhirbase/fhirbase-plv8/releases/download/v1.3.0.23/fhirbase-1.3.0.23.sql.zip \
+         | funzip ; } \
+      | psql
+    [[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
+else
+    echo Assume that database $PGDATABASE.$pg_schema \
+         contains installed Fhirbase.
+fi
+
+echo Create loading fake data function in $PGDATABASE.$pg_schema \
+     from "$data_directory".
+{ echo "SET search_path TO $pg_schema;" && cat "$script_directory"/load.sql ; } \
+    | psql
+[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
+
+echo Load dummy data to $PGDATABASE.$pg_schema from "$data_directory".
+read -r -d '' sql << EOF
+SET search_path TO $pg_schema;
+SELECT load_dummy_data('$data_directory');
+EOF
+echo "$sql" | psql || exit 1
+
+read -r -d '' sql << EOF
+SET search_path TO $pg_schema;
+SET plv8.start_proc = 'plv8_init';
+SELECT fhir_create_storage('{"resourceType": "Organization"}'::json);
+SELECT fhir_create_storage('{"resourceType": "Encounter"}'::json);
+SELECT fhir_create_storage('{"resourceType": "Practitioner"}'::json);
+SELECT fhir_create_storage('{"resourceType": "Patient"}'::json);
+EOF
+echo "$sql" | psql || exit 1
+
+echo Create generation functions in $PGDATABASE.$pg_schema.
+{ echo "SET search_path TO $pg_schema;" && cat "$script_directory"/generate.sql ; } \
+    | psql
+[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
+
+if [[ $verbose -gt 0 ]] ; then
+    exec > /dev/tty
+else
+    exec > /dev/null
+fi
+
+echo Generate seed data.
+read -r -d '' sql << EOF
+SET search_path TO $pg_schema;
+SET plv8.start_proc = 'plv8_init';
+\timing on
+SELECT generate($number_of_patients, $number_of_practitioners, $rand_seed);
+EOF
+echo "$sql" | psql || exit 1

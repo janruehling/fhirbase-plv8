@@ -9,8 +9,8 @@ This is new version of fhirbase, with support of DSTU-2 and planned support many
 *  Extended query syntax
 *  Terminologies
 *  Profile validation
-*  References validateion
-*  ValueSet validateion
+*  References validation
+*  ValueSet validation
 
 ## Motivation
 
@@ -25,8 +25,8 @@ on a concept of __resource__.
 > product lines while leveraging the latest web standards and applying
 > a tight focus on implementability.
 
-Also we learned that data is a heart of any information system, and
-should be reliably managed. PostgreSQL is a battle proved open source
+We also learned that data is a heart of any information system, and
+should be reliably managed. PostgreSQL is a battle proven open source
 database which supports structured documents (jsonb) while
 preserving ACID guaranties and richness of SQL query language.
 
@@ -49,7 +49,7 @@ To install fhirbase you need postgresql-9.4 and plv8 extension.
 
 ```sh
 sudo apt-get install postgresql-contrib-9.4 postgresql-9.4-plv8  -qq -y
-psql -c "CREATE USER user WITH PASSWORD 'password'"
+psql -c "CREATE USER \"user\" WITH PASSWORD 'password'"
 psql -c 'CREATE DATABASE fhirbase;' -U user
 psql -c '\dt' -U postgres
 export DATABASE_URL=postgres://user:password@localhost:5432/fhirbase
@@ -73,8 +73,10 @@ cat fhirbase-<version of the fhirbase>-patch.sql | psql fhirbase
 
 ## Development Installation
 
-Development installation requires node 0.12 and npm,
-which could be installed by [nvm](https://github.com/creationix/nvm):
+Development installation requires node v6.2.0 or newer
+and npm 3.0.0 or newer, which could be installed by [nvm][]:
+
+[nvm]: https://github.com/creationix/nvm
 
 ```sh
 # install node < 0.12 by nvm for example
@@ -95,7 +97,7 @@ psql -c '\dt' -U postgres
 export DATABASE_URL=postgres://fb:fb@localhost:5432/fhirbase
 
 # build migrations
-coffee  utils/generate_migrations.coffee -n  | psql fhirbase
+coffee  utils/generate_schema.coffee -n  | psql fhirbase
 cat utils/patch_3.sql | psql fhirbase
 
 # change something
@@ -125,15 +127,14 @@ echo "plv8.start_proc='plv8_init'" >> /etc/postgresql/9.4/main/postgresql.conf
 
 ## Usage
 
-To make fhirbase-plv8 work
-you have to just after opening connection to postgresql
-you have to issue following command (read more [here](http://pgxn.org/dist/plv8/doc/plv8.html#Start-up.procedure)):
+To make fhirbase-plv8 work, just after opening connection to postgresql, you have to issue the following command (read more [here](http://pgxn.org/dist/plv8/doc/plv8.html#Start-up.procedure)):
 
 
 ```sql
 SET plv8.start_proc = 'plv8_init';
 ```
 
+## Examples
 
 ```sql
 
@@ -145,6 +146,22 @@ SELECT fhir_create_storage('{"resourceType": "Patient"}');
 SELECT fhir_drop_storage('{"resourceType": "Patient"}');
 SELECT fhir_truncate_storage('{"resourceType": "Patient"}');
 -- delete all resources of specified type
+
+-- the above commands should look like this:
+$ psql fhirbase
+psql (9.4.6)
+Type "help" for help.
+
+fhirbase=# SET plv8.start_proc = 'plv8_init';
+SET
+fhirbase=# SELECT fhir_create_storage('{"resourceType": "Patient"}');
+                  fhir_create_storage                  
+-------------------------------------------------------
+ {"status":"ok","message":"Table patient was created"}
+(1 row)
+
+fhirbase=# 
+
 
 -- CRUD
 
@@ -211,11 +228,11 @@ SELECT fhir_search('{"resourceType": "Patient", "queryString": "name=smith&_tota
 
 ```
 
-## Contribution
+## Contributing
 
-* Star us on GitHub
-* If you encountered a bug, please [make an Issue](https://github.com/fhirbase/fhirbase-plv8/issues/new)
-* Contribute to fhirbase
+See the [CONTRIBUTING.md][].
+
+[CONTRIBUTING.md]:https://github.com/fhirbase/fhirbase-plv8/blob/master/CONTRIBUTING.md
 
 ## License
 

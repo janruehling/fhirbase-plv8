@@ -1,3 +1,6 @@
+# OperationOutcome.issue[].code <https://hl7-fhir.github.io/valueset-issue-type.html#expansion>.
+# OperationOutcome.issue[].details.coding[].code <https://hl7-fhir.github.io/valueset-operation-outcome.html#expansion>.
+
 assert = (x, msg)->
   unless x
     throw new Error(msg)
@@ -33,6 +36,7 @@ exports.not_found = (id)->
         ]
       }
       diagnostics: "Resource Id \"#{id}\" does not exist"
+      extension: [{url: 'http-status-code', valueString: '404'}]
     }
   ]
 
@@ -51,6 +55,7 @@ exports.version_not_found = (id, versionId)->
         ]
       }
       diagnostics: "Resource Id \"#{id}\" with versionId \"#{versionId}\" does not exist"
+      extension: [{url: 'http-status-code', valueString: '404'}]
     }
   ]
 
@@ -69,6 +74,7 @@ exports.version_deleted = (id, versionId)->
         ]
       }
       diagnostics: "Resource Id \"#{id}\" with versionId \"#{versionId}\" has been deleted"
+      extension: [{url: 'http-status-code', valueString: '410'}]
     }
   ]
 
@@ -79,6 +85,7 @@ exports.non_selective = (msg)->
       severity: 'error'
       code: '412'
       diagnostics: "Precondition Failed error indicating the client's criteria were not selective enough. #{msg}"
+      extension: [{url: 'http-status-code', valueString: '412'}]
     }
   ]
 
@@ -89,6 +96,7 @@ exports.conflict = (msg)->
       severity: 'error'
       code: '409'
       diagnostics: msg
+      extension: [{url: 'http-status-code', valueString: '409'}]
     }
   ]
 
@@ -99,16 +107,18 @@ exports.valueset_not_found = (id)->
       severity: 'error'
       code: 'not-found'
       diagnostics: "ValueSet with id \"#{id}\" does not exist or not supported"
+      extension: [{url: 'http-status-code', valueString: '404'}]
     }
   ]
 
-exports.bad_request = (msg)->
-  resourceType: "OperationOutcome"
+exports.bad_request = (diagnostics)->
+  resourceType: 'OperationOutcome'
   issue: [
     {
       severity: 'error'
-      code: '400'
-      diagnostics: (msg || "Bad Request")
+      code: 'invalid'
+      diagnostics: (diagnostics || 'Bad Request')
+      extension: [{url: 'http-status-code', valueString: '400'}]
     }
   ]
 
@@ -129,6 +139,7 @@ exports.unknown_type = (resourceType)->
       diagnostics: "Resource Type \"#{resourceType}\" not recognised." +
         " Try create \"#{resourceType}\" resource:" +
         " `SELECT fhir_create_storage('{\"resourceType\": \"#{resourceType}\"}');`"
+      extension: [{url: 'http-status-code', valueString: '404'}]
     }
   ]
 
@@ -147,5 +158,15 @@ exports.truncate_storage_done = (resourceType)->
         ]
       }
       diagnostics: "Resource type \"#{resourceType}\" has been truncated"
+      extension: [{url: 'http-status-code', valueString: '200'}]
     }
+  ]
+
+exports.table_not_exists = (resourceType)->
+  resourceType: 'OperationOutcome'
+  text: {div: "<div>Storage for #{resourceType} not exists</div>"}
+  issue: [
+    severity: 'error'
+    code: 'not-supported'
+    diagnostics: "Storage for #{resourceType} not exists"
   ]

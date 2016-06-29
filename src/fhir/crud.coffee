@@ -30,14 +30,6 @@ validate_create_resource = (resource)->
       code: 'structure'
     ]
 
-table_not_exists = (resourceType)->
-  resourceType: "OperationOutcome"
-  text: {div: "<div>Storage for #{resourceType} not exists</div>"}
-  issue: [
-    severity: 'error'
-    code: 'not-supported'
-  ]
-
 assert = (pred, msg)-> throw new Error("Asserted: #{msg}") unless pred
 
 ensure_meta = (resource, props)->
@@ -50,7 +42,7 @@ ensure_table = (plv8, resourceType)->
   table_name = namings.table_name(plv8, resourceType)
   hx_table_name = namings.history_table_name(plv8, resourceType)
   unless pg_meta.table_exists(plv8, table_name)
-    return [null, null, table_not_exists(resourceType)]
+    return [null, null, outcome.table_not_exists(resourceType)]
   else
     [table_name, hx_table_name, null]
 
@@ -72,7 +64,7 @@ wrap_ensure_table = (fn)->
     table_name = namings.table_name(plv8, resourceType)
     hx_table_name = namings.history_table_name(plv8, resourceType)
     unless pg_meta.table_exists(plv8, table_name)
-      return table_not_exists(resourceType)
+      return outcome.table_not_exists(resourceType)
     else
       query.table_name = table_name
       query.hx_table_name = hx_table_name
@@ -83,7 +75,7 @@ wrap_required_attributes = (fn, attrs)->
     issue = []
     for attr in attrs
       unless _get_in(query, attr)
-        issue.push(severity: 'error', code: 'structure', diagnostics: "expected attribute #{attr}") 
+        issue.push(severity: 'error', code: 'structure', diagnostics: "expected attribute #{attr}")
     if issue.length > 0
       return {resourceType: "OperationOutcome", issue: issue }
     fn(plv8, query)
@@ -116,7 +108,7 @@ wrap_ensure_not_exists = (fn)->
         from: sql.q(query.table_name)
         where: {id: resource.id}
       if res.length > 0
-        return outcome.error(code: 'invalid', diagnostics: "resource with given id already exist ")
+        return outcome.bad_request('resource with given id already exists')
     fn(plv8, query)
 
 wrap_postprocess = (fn)->
@@ -139,7 +131,10 @@ fhir_create_resource = _build [
   if resource.id and not query.allowId
     return outcome.error(
       code: '400'
-      diagnostics: "id is not allowed, use update operation to create with predefined id"
+      diagnostics: '''
+      id is not allowed, use update operation to create with predefined id
+      '''
+      extension: [{url: 'http-status-code', valueString: '400'}]
     )
 
   id = resource.id || utils.uuid(plv8)
@@ -173,7 +168,7 @@ fhir_create_resource = _build [
       version_id: version_id
       resource: sql.jsonb(resource)
       valid_from: sql.now
-      valid_to: sql.now
+      valid_to: sql.infinity
 
   resource
 
@@ -185,7 +180,6 @@ resource_is_deleted = (plv8, query)->
   assert(query.resourceType, 'query.resourceType')
   hx_table_name = namings.history_table_name(plv8, query.resourceType)
   # TODO??
-
 
 fhir_read_resource = _build [
     [wrap_required_attributes, [['id'], ['resourceType']]]
@@ -284,7 +278,7 @@ fhir_update_resource = _build [
       old_version = compat.parse(plv8, res[0].resource)
       id = resource.id
     else
-      return outcome.error(code: 'invalid', diagnostics: "Unexpected many resources for one id")
+      return outcome.bad_request('Unexpected many resources for one id')
 
   if old_version.resourceType == 'OperationOutcome'
     return old_version
@@ -292,7 +286,7 @@ fhir_update_resource = _build [
   throw new Error("Unexpected behavior, no id") unless id
 
   if query.ifMatch && old_version.meta.versionId != query.ifMatch
-    return outcome.conflict("Newer then [#{query.ifMatch}] version available [#{old_version.meta.versionId}]")
+    return outcome.conflict("Newer than [#{query.ifMatch}] version available [#{old_version.meta.versionId}]")
 
   version_id = utils.uuid(plv8)
 
@@ -379,7 +373,7 @@ fhir_patch_resource = _build [
         old_version = compat.parse(plv8, res[0].resource)
         id = resource.id
       else
-        return outcome.error(code: 'invalid', diagnostics: "Unexpected many resources for one id")
+        return outcome.bad_request('Unexpected many resources for one id')
 
     if old_version.resourceType == 'OperationOutcome'
       return old_version
@@ -387,7 +381,7 @@ fhir_patch_resource = _build [
     throw new Error("Unexpected behavior, no id") unless id
 
     if query.ifMatch && old_version.meta.versionId != query.ifMatch
-      return outcome.conflict("Newer then [#{query.ifMatch}] version available [#{old_version.meta.versionId}]")
+      return outcome.conflict("Newer than [#{query.ifMatch}] version available [#{old_version.meta.versionId}]")
 
     version_id = utils.uuid(plv8)
 
@@ -446,7 +440,10 @@ exports.fhir_delete_resource = _build [
     return old_version
 
   if not old_version.meta  or not old_version.meta.versionId
-    return outcome.error(code: 'invalid', diagnostics: "Resource #{query.resourceType}/#{query.id}, has broken old version #{JSON.stringify(old_version)}")
+    return outcome.bad_request(
+      "Resource #{query.resourceType}/#{query.id}, " +
+        "has broken old version #{JSON.stringify(old_version)}"
+    )
 
   resource = utils.copy(old_version)
 

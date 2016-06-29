@@ -1,0 +1,93 @@
+- hosts: tag_performance_fhirbase
+  gather_facts: True
+  tasks:
+
+  - name: Backup PostgreSQl log file
+    shell: cp "{{ postgres.log }}" "{{ postgres.log }}_{{ timestamp }}"
+    sudo_user: "{{ postgres.system_user }}"
+
+  - name: Truncate PostgreSQl log file
+    shell: echo > "{{ postgres.log }}"
+    sudo_user: "{{ postgres.system_user }}"
+
+  - name: PostgreSQl restart
+    service: name=postgresql state=restarted
+    sudo_user: root
+
+  - name: Remove fhirbase folder
+    file: path="{{ fhirbase.app_dir }}" state=absent
+    sudo_user: root
+
+  - name: Remove fhirbase documentation folder
+    file: path="{{ fhirbase.doc_dir }}" state=absent
+    sudo_user: root
+
+  - name: Create fhirbase folder
+    file:
+      path: "{{ fhirbase.app_dir }}"
+      mode: 0755
+      owner: "{{ os.user.name }}"
+      group: "{{ os.user.name }}"
+      state: directory
+    sudo_user: root
+
+  - name: Create fhirbase documentation folder
+    file:
+      path: "{{ fhirbase.doc_dir }}"
+      mode: 0755
+      owner: "{{ os.user.name }}"
+      group: "{{ os.user.name }}"
+      state: directory
+    sudo_user: root
+
+  - name: Clone Fhirbase project
+    shell:
+      git clone
+          git@github_fhirbase_plv8:fhirbase/fhirbase-plv8.git
+          {{ fhirbase.app_dir }}
+      && cd {{ fhirbase.app_dir }}
+      && git submodule update --init --recursive
+    sudo_user: "{{ os.user.name }}"
+
+  - name: Clone Fhirbase documentation project
+    shell:
+      git clone
+          git@github_fhirbase_documentation:fhirbase/fhirbase.github.io.git
+         {{ fhirbase.doc_dir }}
+      && cd {{ fhirbase.doc_dir }}
+      && git submodule update --init --recursive
+    sudo_user: "{{ os.user.name }}"
+
+  - name: Daemonizing Fhirbase performance tests and not waiting for exit
+    shell: |
+      {{ fhirbase.app_dir }}/perf/perf \
+         --createdb \
+         --data-directory={{ fhirbase.app_dir }}/perf/data \
+         --dropdb \
+         --number-of-patients=500000 \
+         --pgdatabase={{ postgres.database }} \
+         --pgpassword={{ postgres.password }} \
+         --pgschema={{ postgres.schema }} \
+         --pguser={{ postgres.user }} \
+         --verbose=3 \
+      && echo "SET search_path TO {{ postgres.schema }}; SET plv8.start_proc = 'plv8_init'; SELECT fhir_benchmark('{}'::json);" \
+      | PGHOST=localhost \
+        PGPORT={{ postgres.port }} \
+        PGDATABASE={{ postgres.database }} \
+        PGUSER={{ postgres.user }} \
+        PGPASSWORD={{ postgres.password }} \
+        psql --pset="pager=off" --tuples-only \
+      | grep  --invert-match SET \
+        > "{{ fhirbase.doc_dir }}/_data/performance.json" \
+      && cd {{ fhirbase.doc_dir }} \
+      && git add _data/performance.json \
+      && git commit --message="{{ git.commit.message }}" \
+      && git push origin {{ git.branch }}
+
+      sudo shutdown -h now
+    args:
+      executable: /bin/bash
+    become: yes
+    become_user: "{{ os.user.name }}"
+    async: 900
+    poll: 0

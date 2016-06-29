@@ -130,6 +130,24 @@ specials =
     query
   format: (query, left, right)->
     query
+  lastUpdated: (query, left, right)->
+    unless query.lastUpdateds
+      query.lastUpdateds = []
+
+    # Search with `prefixes` <https://www.hl7.org/fhir/search.html#prefix>.
+    query.lastUpdateds.push(
+      if right.match(/^[0-9]/)
+        operator: 'eq'
+        value: right
+      else if right.match(OPERATORS_REG)
+        operator: right.substring(0, 2),
+        value: right.substring(2, right.length)
+      else
+        throw new Error("""
+          Search by "lastUpdated" against "#{right}" not implemented
+        """)
+    )
+    query
 
 grouping = (acc, expr)->
   result = acc
