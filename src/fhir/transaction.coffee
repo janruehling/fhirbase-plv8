@@ -14,7 +14,7 @@ strip = (obj)->
 HANDLERS = [
   {
     name: 'Instance'
-    test: new RegExp("^/#{RES_TYPE_RE}/#{ID_RE}$")
+    test: new RegExp("^/?#{RES_TYPE_RE}/#{ID_RE}/?$")
     GET: (match, entry)->
       type: 'read'
       id: match[2]
@@ -35,7 +35,7 @@ HANDLERS = [
   }
   {
     name: 'Revision'
-    test: new RegExp("^/#{RES_TYPE_RE}/#{ID_RE}/_history/#{ID_RE}$")
+    test: new RegExp("^/?#{RES_TYPE_RE}/#{ID_RE}/_history/#{ID_RE}/?$")
     GET: (match, entry)->
       type: 'vread'
       id: match[2]
@@ -44,7 +44,7 @@ HANDLERS = [
   }
   {
     name: 'Instance History'
-    test: new RegExp("^/#{RES_TYPE_RE}/#{ID_RE}/_history$")
+    test: new RegExp("^/?#{RES_TYPE_RE}/#{ID_RE}/_history/?$")
     GET: (match, entry)->
       type: 'history'
       resourceType: match[1]
@@ -63,22 +63,30 @@ HANDLERS = [
   }
   {
     name: 'History'
-    test: new RegExp("^/#{RES_TYPE_RE}/_history$")
+    test: new RegExp("^/?#{RES_TYPE_RE}/_history/?$")
     GET: (match, entry)->
       type: 'history'
       resourceType: match[1]
   }
   {
-    test: new RegExp("^/_history$")
+    name: 'History of all types'
+    test: new RegExp("^/?_history/?$")
     GET: (match, entry)->
       type: 'history'
   }
   {
-    test: new RegExp("^/#{RES_TYPE_RE}/?\\?#{QUERY_STRING_RE}$")
+    name: 'Search and conditional operations'
+    test: new RegExp("^/?#{RES_TYPE_RE}/?\\?#{QUERY_STRING_RE}/?$")
     GET: (match, entry)->
       type: 'search'
       resourceType: match[1]
       queryString: match[2]
+    PUT: (match, entry)->
+      strip
+        type: 'conditionalUpdate'
+        resourceType: match[1]
+        queryString: match[2]
+        resource: entry.resource
   }
 ]
 
@@ -103,8 +111,12 @@ makePlan = (bundle) ->
       action = handler[method]
       action(match, entry)
     else
-      type: 'error'
-      message: "Cannot determine action for request #{method} #{url}"
+      resourceType: 'OperationOutcome'
+      issue: [{
+        severity: 'error'
+        code: '422'
+        diagnostics: "Invalid operation #{method} #{url}"
+      }]
 
   plan.sort (a, b)->
     # Transaction should processed in order (DELETE, POST, PUT, GET).
@@ -114,6 +126,7 @@ makePlan = (bundle) ->
         when 'delete' then 1 # DELETE
         when 'create' then 2 # POST
         when 'update' then 3 # PUT
+        when 'conditionalUpdate' then 3 # PUT
         when 'read' then 4 # GET
         when 'vread' then 4 # GET
         when 'search' then 4 # GET
@@ -165,7 +178,7 @@ executePlan = (plv8, plan) ->
 
         result
 
-      when "update"
+      when "update", "conditionalUpdate"
         action.resource.id = action.resource.id || (!action.queryString && action.id)
         crud.fhir_update_resource(plv8, action)
       when "delete"
@@ -185,46 +198,57 @@ exports.executePlan = executePlan
 execute = (plv8, bundle, strictMode) ->
   plan = makePlan(bundle)
 
+  outcome = (entries)->
+    issues = entries
+      .filter (entry)->
+        entry.resourceType == 'OperationOutcome' &&
+          entry.issue.filter(
+            (issue)-> issue.severity == 'fatal' || issue.severity == 'error'
+          ).length > 0
+      .map((entry)-> entry.issue)
+      .reduce(((a, b)-> a.concat(b)), []) #flatten
+
+    resourceType: 'OperationOutcome'
+    issue: issues
+    # extension: [{url: 'http-status-code', valueString: '400'}]
+
   if strictMode
-    errors = plan.filter (i) -> i.type == 'error'
+    errors = plan.filter (i) -> i.resourceType == 'OperationOutcome'
 
     if errors.length > 0
-      return {
-        resourceType: "OperationOutcome"
-        message: 'Transaction was rollbacked.' +
-          ' There were incorrect requests within transaction: ' +
-          JSON.stringify(errors)
-      }
+      return outcome(errors)
 
+  entries = null
   wasRollbacked = false
   try
-    result = #not assigning( because plv8 not return from `subtransaction` function( <http://pgxn.org/dist/plv8/doc/plv8.html#Subtransaction>
-      plv8.subtransaction(->
-        r = executePlan(plv8, plan)
+    plv8.subtransaction ->
+      entries = executePlan(plv8, plan)
 
-        shouldRollback = false
-        for resource in r
-          if resource.resourceType == 'OperationOutcome'
-            shouldRollback = true
-            break
+      shouldRollback = false
+      for resource in entries
+        if resource.resourceType == 'OperationOutcome' &&
+           typeof(resource.issue) == 'object'
+          for issue in resource.issue
+            if issue.severity == 'fatal' || issue.severity == 'error'
+              shouldRollbacked = true
+              break
+        if shouldRollbacked
+          break
 
-        if shouldRollback
-          throw new Error('Transaction should rollback')
-
-        r
-      )
+      if shouldRollbacked
+        throw new Error('Transaction should rollback')
   catch e
     wasRollbacked = true
 
   if wasRollbacked
-    resourceType: 'OperationOutcome'
-    message: 'Transaction was rollbacked.' +
-      ' There were incorrect requests within transaction: ' +
-      JSON.stringify(result) #not assigned( because plv8 not return from `subtransaction` function( <http://pgxn.org/dist/plv8/doc/plv8.html#Subtransaction>
+    outcome(entries)
   else
-    resourceType: "Bundle"
+    backboneElements = entries.map (entry)->
+      resource: entry
+
+    resourceType: 'Bundle'
     type: 'transaction-response'
-    entry: result
+    entry: backboneElements
 
 exports.execute = execute
 
