@@ -220,13 +220,13 @@ To build search query we need to
           throw new Error("Expected query.resourceType attribute")
 
         next_alias = mk_alias()
-
         alias = next_alias()
 
         expr = parser.parse(query.resourceType, query.queryString || "")
         expr = expand.expand(idx, expr)
         expr = normalize_operators(expr)
 
+        table_name = namings.table_name(plv8, expr.query)
         expr.where = to_hsql(alias, expr.where)
 
         if expr.ids
@@ -255,11 +255,13 @@ To build search query we need to
               ]
             )
 
-        if expr.sort
+        if expr.sort && !is_nested_order(expr.sort)
           ordering = order_hsql(alias, expr.sort)
 
         if expr.sort && is_nested_order(expr.sort)
-          nested_order_query = get_nested_order_query(expr, alias)
+          nested_table_alias = next_alias()
+          ordering = order_hsql(nested_table_alias, expr.sort)
+          nested_order_query = get_nested_order_query(expr, alias, nested_table_alias, table_name)
           hsql =
             select: nested_order_query.select,
             from: nested_order_query.from,
@@ -339,43 +341,42 @@ implementation based on searchType
         return special_resource_types[table_name]
       return "'"+table_name+"'"
 
-    build_join_part = (table, nested_table, alias)->
+    build_join_part = (table, nested_table, main_table_alias, nested_table_alias)->
       switch table
         when "appointment"
-          return [[['$raw', "#{nested_table} AS #{alias}"],['$raw', "#{alias}.id = subelem_id"]]]
+          return [[['$raw', "#{nested_table} AS #{nested_table_alias}"],['$raw', "#{nested_table_alias}.id = subelem_id"]]]
         when "encounter"
           resource = resource_type(nested_table)
           if resource == "'participant'"
-            return [[['$raw', "#{nested_table} AS #{alias}"],['$raw', "#{alias}.id = subelem_id"]]]
+            return [[['$raw', "#{nested_table} AS #{nested_table_alias}"],['$raw', "#{nested_table_alias}.id = subelem_id"]]]
           else
-            return [[['$raw', "#{table}"], ['$raw', "#{alias}.id=split_part((\"#{table}\".resource->#{resource}->>'reference'), '/', 2)"]]]
+            return [[['$raw', "#{table} AS #{main_table_alias}"], ['$raw', "#{nested_table_alias}.id=split_part((\"#{main_table_alias}\".resource->#{resource}->>'reference'), '/', 2)"]]]
 
-    build_from_part = (table, nested_table, alias)->
+    build_from_part = (table, nested_table, main_table_alias, nested_table_alias)->
       switch table
         when "appointment"
-          return ['$raw', "(SELECT split_part((json_array_elements((\"#{table}\".resource->'participant')::json)->'actor'->>'reference')::text, '/', 2)::text as subelem_id, \"#{table}\".* FROM \"#{table}\") AS #{table}"]
+          return ['$raw', "(SELECT split_part((json_array_elements((\"#{table}\".resource->'participant')::json)->'actor'->>'reference')::text, '/', 2)::text as subelem_id, \"#{table}\".* FROM \"#{table}\") AS #{main_table_alias}"]
         when "encounter"
           resource = resource_type(nested_table)
           if resource == "'participant'"
-            return ['$raw', "(SELECT split_part((json_array_elements((\"#{table}\".resource->'participant')::json)->'individual'->>'reference')::text, '/', 2)::text as subelem_id, \"#{table}\".* FROM \"#{table}\") AS #{table}"]
+            return ['$raw', "(SELECT split_part((json_array_elements((\"#{table}\".resource->'participant')::json)->'individual'->>'reference')::text, '/', 2)::text as subelem_id, \"#{table}\".* FROM \"#{table}\") AS #{main_table_alias}"]
           else
-            return ['$alias', ['$q', "#{nested_table}"], alias]
+            return ['$alias', ['$q', "#{nested_table}"], nested_table_alias]
 
-    get_nested_order_query = (expr, alias)->
+    get_nested_order_query = (expr, main_table_alias, nested_table_alias, table_name)->
       nested_table_name = nested_table(expr.sort)
-      table_name = namings.table_name(plv8, expr.query)
       if table_name == "appointment"
         {
-            select: ":#{table_name}.*",
-            from: build_from_part(table_name, nested_table_name, alias),
-            join: build_join_part(table_name, nested_table_name, alias),
+            select: ":#{main_table_alias}.*",
+            from: build_from_part(table_name, nested_table_name, main_table_alias, nested_table_alias),
+            join: build_join_part(table_name, nested_table_name, main_table_alias, nested_table_alias),
             where: expr.where
         }
       else if table_name == "encounter"
         {
-            select: ":#{table_name}.*",
-            from: build_from_part(table_name, nested_table_name, alias),
-            join: build_join_part(table_name, nested_table_name, alias),
+            select: ":#{main_table_alias}.*",
+            from: build_from_part(table_name, nested_table_name, main_table_alias, nested_table_alias),
+            join: build_join_part(table_name, nested_table_name, main_table_alias, nested_table_alias),
             where: expr.where
         }
 
@@ -428,7 +429,6 @@ we just strip limit, offset, order and rewrite select clause:
     get_count = (plv8, honey, query_obj) ->
       if !query_obj.total_method || query_obj.total_method is "exact"
         query_obj.total_method = "exact"
-
         utils.exec(plv8, countize_query(honey))[0].count
       else if query_obj.total_method is "estimated"
         sql_query= sql(honey)
