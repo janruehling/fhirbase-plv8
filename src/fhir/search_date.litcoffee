@@ -107,16 +107,16 @@ Function to convert query parameter into range.
     exports.value_to_range = value_to_range
 
     overlap_expr = (tbl, meta, value)->
-      ["$&&", extract_expr(meta), value_to_range(meta.operator, value.value)]
+      ["$&&", extract_expr(meta, tbl), value_to_range(meta.operator, value.value)]
 
     not_overlap_expr = (tbl, meta, value)->
-      ['$not', ["$&&", extract_expr(meta), value_to_range(meta.operator, value.value)]]
+      ['$not', ["$&&", extract_expr(meta, tbl), value_to_range(meta.operator, value.value)]]
 
     missing_expr = (tbl, meta, value)->
       if value.value == 'false'
-        ["$notnull", extract_expr(meta)]
+        ["$notnull", extract_expr(meta, tbl)]
       else
-        ["$null", extract_expr(meta)]
+        ["$null", extract_expr(meta, tbl)]
 
     TODO = -> throw new Error("Date search: unimplemented")
 
