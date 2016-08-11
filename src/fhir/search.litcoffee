@@ -32,6 +32,7 @@ so the code split as much as possible  into small modules
     pg_meta = require('../core/pg_meta')
     sql = require('../honey')
     utils = require('../core/utils')
+
 For every search type we have dedicated module,
 with indexing and building search expression implementation.
 
@@ -220,6 +221,7 @@ To build search query we need to
           throw new Error("Expected query.resourceType attribute")
 
         next_alias = mk_alias()
+
         alias = next_alias()
 
         expr = parser.parse(query.resourceType, query.queryString || "")

@@ -27,6 +27,7 @@ HANDLERS = [
         id: match[2]
         resourceType: match[1]
         resource: entry.resource
+        ifMatch: entry.request.ifMatch
 
     DELETE: (match, entry)->
       type: 'delete'
@@ -87,6 +88,11 @@ HANDLERS = [
         resourceType: match[1]
         queryString: match[2]
         resource: entry.resource
+    DELETE: (match, entry)->
+      strip
+        type: 'conditionalDelete'
+        resourceType: match[1]
+        queryString: match[2]
   }
 ]
 
@@ -119,11 +125,13 @@ makePlan = (bundle) ->
       }]
 
   plan.sort (a, b)->
-    # Transaction should processed in order (DELETE, POST, PUT, GET).
+    # Transaction should processed in order (DELETE, POST, PUT, GET)
+    # <http://hl7-fhir.github.io/http.html#2.1.0.16.2>.
 
     number = (action)->
       switch action.type
         when 'delete' then 1 # DELETE
+        when 'conditionalDelete' then 1 # DELETE
         when 'create' then 2 # POST
         when 'update' then 3 # PUT
         when 'conditionalUpdate' then 3 # PUT
@@ -178,11 +186,11 @@ executePlan = (plv8, plan) ->
 
         result
 
-      when "update", "conditionalUpdate"
+      when 'update', 'conditionalUpdate'
         action.resource.id = action.resource.id || (!action.queryString && action.id)
         crud.fhir_update_resource(plv8, action)
-      when "delete"
-        crud.fhir_delete_resource(plv8, {id: action.id, resourceType: action.resourceType})
+      when 'delete', 'conditionalDelete'
+        crud.fhir_delete_resource(plv8, action)
       when "read"
         crud.fhir_read_resource(plv8, {id: action.id, resourceType: action.resourceType})
       when "vread"
@@ -236,7 +244,7 @@ execute = (plv8, bundle, strictMode) ->
           break
 
       if shouldRollbacked
-        throw new Error('Transaction should rollback')
+        throw new Error('FHIR transaction should rollback')
   catch e
     wasRollbacked = true
 
