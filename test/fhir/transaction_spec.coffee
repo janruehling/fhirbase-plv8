@@ -52,6 +52,84 @@ describe 'Transaction', ->
   beforeEach ->
     schema.fhir_truncate_storage(plv8, resourceType: 'Patient')
 
+  it 'update resource contention', ->
+    created = crud.fhir_create_resource(plv8, {
+      "allowId": true,
+      "resource": {
+        "resourceType": "Patient",
+        "name": [{"given": ["Foo"]}],
+        "id": "patient-id"
+      }
+    })
+
+    bundle1 = {
+      "resourceType":"Bundle",
+      "type":"transaction",
+      "entry": [
+        {
+          "resource": {"resourceType": "Patient", "name": [{"given":["Bar"]}]},
+          "request": {
+            "ifMatch":created.meta.versionId,
+            "method":"PUT",
+            "url":"Patient/patient-id"
+          }
+        }
+      ]
+    }
+
+    transaction1 = transaction.fhir_transaction(plv8, bundle1)
+    match(
+      transaction1,
+      {
+        "resourceType": "Bundle",
+        "type": "transaction-response",
+        "entry": [
+          {
+            "resource": {
+              "resourceType": "Patient",
+              "name": [{"given": ["Bar"]}],
+              "id": "patient-id",
+            }
+          }
+        ]
+      }
+    )
+
+    bundle2 = {
+      "resourceType":"Bundle",
+      "type":"transaction",
+      "entry": [
+        {
+          "resource": {"resourceType": "Patient", "name": [{"given":["Xyz"]}]},
+          "request": {
+            "ifMatch":created.meta.versionId,
+            "method":"PUT",
+            "url":"Patient/patient-id"
+          }
+        }
+      ]
+    }
+
+    transaction2 = transaction.fhir_transaction(plv8, bundle2)
+    match(
+      transaction2,
+      {
+        "resourceType": "OperationOutcome",
+        "issue": [
+          {
+            "severity": "error",
+            "code": "409",
+            "extension": [
+              {
+                "url": "http-status-code",
+                "valueString": "409"
+              }
+            ]
+          }
+        ]
+      }
+    )
+
   it 'search', ->
     crud.fhir_create_resource(plv8,
       resource: {resourceType: 'Patient', name: [{family: ['Foo bar']}]})
@@ -79,64 +157,86 @@ describe 'Transaction', ->
     assert.equal(r.entry[0].resource.resourceType, 'Patient')
     assert.equal(r.entry[0].resource.name[0].family[0], 'Foo bar')
 
-  # Conditional update in transaction doesn't work correctly #126
-  # <https://github.com/fhirbase/fhirbase-plv8/issues/126>
-  it 'conditional update', ->
-    crud.fhir_create_resource(plv8, {
-      "allowId": true,
-      "resource": {
-        "resourceType": "Patient",
-        "name": [{"given": ["Name1"], "family": ["Foo"]}],
-        "id": "id1"
-      }
-    })
-    crud.fhir_create_resource(plv8, {
-      "allowId": true,
-      "resource": {
-        "resourceType": "Patient",
-        "name": [{"given": ["Name2"], "family": ["Bar"]}],
-        "id": "id2"
-      }
-    })
+  describe 'conditional', ->
+    beforeEach ->
+      schema.fhir_truncate_storage(plv8, resourceType: 'Patient')
+      crud.fhir_create_resource(plv8, {
+        "allowId": true,
+        "resource": {
+          "resourceType": "Patient",
+          "name": [{"given": ["Name1"], "family": ["Foo"]}],
+          "id": "id1"
+        }
+      })
+      crud.fhir_create_resource(plv8, {
+        "allowId": true,
+        "resource": {
+          "resourceType": "Patient",
+          "name": [{"given": ["Name2"], "family": ["Bar"]}],
+          "id": "id2"
+        }
+      })
 
-    bundle = {
-      "resourceType":"Bundle",
-      "type":"transaction",
-      "entry": [
-        {
-          "resource": {
-            "resourceType": "Patient",
-            "name": [{"given":["Name1"],"family":["Xyz"]}]
-          },
-          "request": {"method":"PUT","url":"Patient?given=Name1"}}
-        ]
-      }
-
-    match(
-      transaction.fhir_transaction(plv8, bundle),
-      {
-        "resourceType": "Bundle",
-        "type": "transaction-response",
+    # Conditional update in transaction doesn't work correctly #126
+    # <https://github.com/fhirbase/fhirbase-plv8/issues/126>
+    it 'update', ->
+      bundle = {
+        "resourceType":"Bundle",
+        "type":"transaction",
         "entry": [
           {
             "resource": {
               "resourceType": "Patient",
-              "name": [
-                {
-                  "given": [
-                    "Name1"
-                  ],
-                  "family": [
-                    "Xyz"
-                  ]
-                }
-              ],
-              "id": "id1",
+              "name": [{"given":["Name1"],"family":["Xyz"]}]
+            },
+            "request": {"method":"PUT","url":"Patient?given=Name1"}}
+          ]
+        }
+
+      match(
+        transaction.fhir_transaction(plv8, bundle),
+        {
+          "resourceType": "Bundle",
+          "type": "transaction-response",
+          "entry": [
+            {
+              "resource": {
+                "resourceType": "Patient",
+                "name": [
+                  {
+                    "given": [
+                      "Name1"
+                    ],
+                    "family": [
+                      "Xyz"
+                    ]
+                  }
+                ],
+                "id": "id1",
+              }
             }
-          }
-        ]
+          ]
+        }
+      )
+
+    # Conditional delete in transaction doesn't work correctly #127
+    # <https://github.com/fhirbase/fhirbase-plv8/issues/127>
+    it 'delete', ->
+      bundle = {
+        "resourceType":"Bundle",
+        "type":"transaction",
+        "entry":[{
+          "request":{"method":"DELETE","url":"Patient?given=Name1"}
+        }]
       }
-    )
+
+      match(
+        transaction.fhir_transaction(plv8, bundle),
+        {
+          "resourceType": "Bundle",
+          "type": "transaction-response"
+        }
+      )
 
   it 'roll back on failure', -> #related to issue #112
     schema.fhir_create_storage(plv8, {"resourceType": "Patient"})
@@ -175,6 +275,18 @@ describe 'Transaction', ->
       }
     )
 
+    match(
+      t,
+      resourceType: 'OperationOutcome'
+      issue: [
+        {
+          severity: 'error',
+          code: 'not-found',
+          diagnostics: 'Resource Id "id2" does not exist'
+        }
+      ]
+    )
+
     patient = crud.fhir_read_resource(plv8,
       {"resourceType": "Patient", "id": "id1"})
 
@@ -191,6 +303,7 @@ describe 'Transaction', ->
           url: '/Patient/id1',
           method: 'POST'
       ]
+
     match(
       transaction.fhir_transaction(plv8, bundle),
       resourceType: 'OperationOutcome'
