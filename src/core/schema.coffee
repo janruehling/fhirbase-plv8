@@ -78,18 +78,17 @@ exports.fhir_create_all_storages.plv8_signature = {
 }
 
 create_storage_reference = (plv8, query)->
-  refs_suffix = "_refs"
   resource_type = query.resourceType
-  refs_nm = namings.table_name(plv8, resource_type) + refs_suffix
+  refs_nm = namings.reference_table_name(plv8, resource_type)
   if pg_meta.table_exists(plv8, refs_nm)
     {status: 'error', message: "Table #{refs_nm} already exists"}
   else
-    plv8.execute(create_storage_reference_sql(plv8, query, refs_suffix))
+    plv8.execute(create_storage_reference_sql(plv8, query))
     {status: 'ok', message: "Table #{refs_nm} was created"}
 
-create_storage_reference_sql = (plv8, query, refs_suffix)->
+create_storage_reference_sql = (plv8, query)->
   resource_type = query.resourceType
-  refs_nm = namings.table_name(plv8, resource_type) + refs_suffix
+  refs_nm = namings.reference_table_name(plv8, resource_type)
   [
     {
       create: "table"
@@ -143,6 +142,7 @@ exports.fhir_drop_all_storages = (plv8)->
 
   for resourceType in resourceTypes
     fhir_drop_storage(plv8, resourceType: resourceType)
+    drop_storage_reference(plv8, resourceType: resourceType)
 
   resourceTypes
 
@@ -151,6 +151,22 @@ exports.fhir_drop_all_storages.plv8_signature = {
   returns: 'SETOF text'
   immutable: false
 }
+
+drop_storage_reference = (plv8, query)->
+  resource_type = query.resourceType
+  refs_nm = namings.reference_table_name(plv8, resource_type)
+  unless pg_meta.table_exists(plv8, refs_nm)
+    {status: 'error', message: "Table #{refs_nm} not exists"}
+  else
+    plv8.execute(drop_storage_reference_sql(plv8, query))
+    {status: 'ok', message: "Table #{refs_nm} was dropped"}
+
+drop_storage_reference_sql = (plv8, query)->
+  resource_type = query.resourceType
+  refs_nm = namings.reference_table_name(plv8, resource_type)
+  [
+   {drop: "table", name: sql.q(refs_nm), safe: true}
+  ].map(sql).join(";\n")
 
 exports.fhir_describe_storage = (plv8, query)->
   resource_type = query.resourceType
