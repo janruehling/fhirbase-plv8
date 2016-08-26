@@ -46,7 +46,6 @@ fhir_create_storage_sql = (plv8, query)->
     }
   ].map(sql).join(";\n")
 
-
 exports.fhir_create_storage_sql = fhir_create_storage_sql
 exports.fhir_create_storage_sql.plv8_signature = ['json', 'json']
 
@@ -57,7 +56,7 @@ fhir_create_storage = (plv8, query)->
   if pg_meta.table_exists(plv8, nm)
     {status: 'error', message: "Table #{nm} already exists"}
   else
-    plv8.execute(fhir_create_storage_sql(plv8, query)) 
+    plv8.execute(fhir_create_storage_sql(plv8, query))
     {status: 'ok', message: "Table #{nm} was created"}
 
 exports.fhir_create_storage = fhir_create_storage
@@ -68,6 +67,7 @@ exports.fhir_create_all_storages = (plv8)->
 
   for resourceType in resourceTypes
     fhir_create_storage(plv8, resourceType: resourceType)
+    create_storage_reference(plv8, resourceType: resourceType)
 
   resourceTypes
 
@@ -76,6 +76,31 @@ exports.fhir_create_all_storages.plv8_signature = {
   returns: 'SETOF text'
   immutable: false
 }
+
+create_storage_reference = (plv8, query)->
+  refs_suffix = "_refs"
+  resource_type = query.resourceType
+  refs_nm = namings.table_name(plv8, resource_type) + refs_suffix
+  if pg_meta.table_exists(plv8, refs_nm)
+    {status: 'error', message: "Table #{refs_nm} already exists"}
+  else
+    plv8.execute(create_storage_reference_sql(plv8, query, refs_suffix))
+    {status: 'ok', message: "Table #{refs_nm} was created"}
+
+create_storage_reference_sql = (plv8, query, refs_suffix)->
+  resource_type = query.resourceType
+  refs_nm = namings.table_name(plv8, resource_type) + refs_suffix
+  [
+    {
+      create: "table"
+      name: sql.q(refs_nm)
+      columns: [
+        [':id_source', ':text']
+        [':type_dest', ':text']
+        [':id_dest', ':text']
+      ]
+    }
+  ].map(sql).join(";\n")
 
 fhir_drop_storage_sql = (plv8, query)->
   resource_type = query.resourceType
