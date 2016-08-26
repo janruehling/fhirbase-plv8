@@ -186,10 +186,12 @@ exports.fhir_truncate_storage = (plv8, query)->
   resource_type = query.resourceType
   nm = namings.table_name(plv8, resource_type)
   hx_nm = namings.history_table_name(plv8, nm)
+  refs_nm = namings.reference_table_name(plv8, resource_type)
 
   if pg_meta.table_exists(plv8, nm)
     utils.exec(plv8, truncate: sql.q(nm))
     utils.exec(plv8, truncate: sql.q(hx_nm))
+    utils.exec(plv8, truncate: sql.q(refs_nm))
     outcome.truncate_storage_done(resource_type)
   else
     outcome.unknown_type(resource_type)
