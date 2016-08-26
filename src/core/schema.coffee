@@ -8,6 +8,7 @@ fhir_create_storage_sql = (plv8, query)->
   resource_type = query.resourceType
   nm = namings.table_name(plv8, resource_type)
   hx_nm = namings.history_table_name(plv8, resource_type)
+  refs_nm = namings.reference_table_name(plv8, resource_type)
   constraints = [
     [":ALTER COLUMN resource SET NOT NULL"]
     [":ALTER COLUMN resource_type SET DEFAULT", sql.inlineString(resource_type)]
@@ -44,6 +45,15 @@ fhir_create_storage_sql = (plv8, query)->
         [":ALTER COLUMN valid_to SET NOT NULL"]
       ].concat(constraints)
     }
+    {
+      create: "table"
+      name: sql.q(refs_nm)
+      columns: [
+        [':id_source', ':text']
+        [':type_dest', ':text']
+        [':id_dest', ':text']
+      ]
+    }
   ].map(sql).join(";\n")
 
 exports.fhir_create_storage_sql = fhir_create_storage_sql
@@ -67,7 +77,6 @@ exports.fhir_create_all_storages = (plv8)->
 
   for resourceType in resourceTypes
     fhir_create_storage(plv8, resourceType: resourceType)
-    create_storage_reference(plv8, resourceType: resourceType)
 
   resourceTypes
 
@@ -77,37 +86,16 @@ exports.fhir_create_all_storages.plv8_signature = {
   immutable: false
 }
 
-create_storage_reference = (plv8, query)->
-  resource_type = query.resourceType
-  refs_nm = namings.reference_table_name(plv8, resource_type)
-  if pg_meta.table_exists(plv8, refs_nm)
-    {status: 'error', message: "Table #{refs_nm} already exists"}
-  else
-    plv8.execute(create_storage_reference_sql(plv8, query))
-    {status: 'ok', message: "Table #{refs_nm} was created"}
-
-create_storage_reference_sql = (plv8, query)->
-  resource_type = query.resourceType
-  refs_nm = namings.reference_table_name(plv8, resource_type)
-  [
-    {
-      create: "table"
-      name: sql.q(refs_nm)
-      columns: [
-        [':id_source', ':text']
-        [':type_dest', ':text']
-        [':id_dest', ':text']
-      ]
-    }
-  ].map(sql).join(";\n")
-
 fhir_drop_storage_sql = (plv8, query)->
   resource_type = query.resourceType
   nm = namings.table_name(plv8, resource_type)
   hx_nm = namings.history_table_name(plv8, nm)
+  refs_nm = namings.reference_table_name(plv8, resource_type)
+
   [
-   {drop: "table", name: sql.q(nm), safe: true}
-   {drop: "table", name: sql.q(hx_nm), safe: true}
+    {drop: "table", name: sql.q(nm), safe: true}
+    {drop: "table", name: sql.q(hx_nm), safe: true}
+    {drop: "table", name: sql.q(refs_nm), safe: true}
   ].map(sql).join(";\n")
 
 exports.fhir_drop_storage_sql = fhir_drop_storage_sql
@@ -142,7 +130,6 @@ exports.fhir_drop_all_storages = (plv8)->
 
   for resourceType in resourceTypes
     fhir_drop_storage(plv8, resourceType: resourceType)
-    drop_storage_reference(plv8, resourceType: resourceType)
 
   resourceTypes
 
@@ -151,22 +138,6 @@ exports.fhir_drop_all_storages.plv8_signature = {
   returns: 'SETOF text'
   immutable: false
 }
-
-drop_storage_reference = (plv8, query)->
-  resource_type = query.resourceType
-  refs_nm = namings.reference_table_name(plv8, resource_type)
-  unless pg_meta.table_exists(plv8, refs_nm)
-    {status: 'error', message: "Table #{refs_nm} not exists"}
-  else
-    plv8.execute(drop_storage_reference_sql(plv8, query))
-    {status: 'ok', message: "Table #{refs_nm} was dropped"}
-
-drop_storage_reference_sql = (plv8, query)->
-  resource_type = query.resourceType
-  refs_nm = namings.reference_table_name(plv8, resource_type)
-  [
-   {drop: "table", name: sql.q(refs_nm), safe: true}
-  ].map(sql).join(";\n")
 
 exports.fhir_describe_storage = (plv8, query)->
   resource_type = query.resourceType
