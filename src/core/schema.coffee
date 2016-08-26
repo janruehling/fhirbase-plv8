@@ -8,6 +8,7 @@ fhir_create_storage_sql = (plv8, query)->
   resource_type = query.resourceType
   nm = namings.table_name(plv8, resource_type)
   hx_nm = namings.history_table_name(plv8, resource_type)
+  refs_nm = namings.reference_table_name(plv8, resource_type)
   constraints = [
     [":ALTER COLUMN resource SET NOT NULL"]
     [":ALTER COLUMN resource_type SET DEFAULT", sql.inlineString(resource_type)]
@@ -44,8 +45,16 @@ fhir_create_storage_sql = (plv8, query)->
         [":ALTER COLUMN valid_to SET NOT NULL"]
       ].concat(constraints)
     }
+    {
+      create: "table"
+      name: sql.q(refs_nm)
+      columns: [
+        [':id_source', ':text']
+        [':type_dest', ':text']
+        [':id_dest', ':text']
+      ]
+    }
   ].map(sql).join(";\n")
-
 
 exports.fhir_create_storage_sql = fhir_create_storage_sql
 exports.fhir_create_storage_sql.plv8_signature = ['json', 'json']
@@ -57,7 +66,7 @@ fhir_create_storage = (plv8, query)->
   if pg_meta.table_exists(plv8, nm)
     {status: 'error', message: "Table #{nm} already exists"}
   else
-    plv8.execute(fhir_create_storage_sql(plv8, query)) 
+    plv8.execute(fhir_create_storage_sql(plv8, query))
     {status: 'ok', message: "Table #{nm} was created"}
 
 exports.fhir_create_storage = fhir_create_storage
@@ -81,9 +90,12 @@ fhir_drop_storage_sql = (plv8, query)->
   resource_type = query.resourceType
   nm = namings.table_name(plv8, resource_type)
   hx_nm = namings.history_table_name(plv8, nm)
+  refs_nm = namings.reference_table_name(plv8, resource_type)
+
   [
-   {drop: "table", name: sql.q(nm), safe: true}
-   {drop: "table", name: sql.q(hx_nm), safe: true}
+    {drop: "table", name: sql.q(nm), safe: true}
+    {drop: "table", name: sql.q(hx_nm), safe: true}
+    {drop: "table", name: sql.q(refs_nm), safe: true}
   ].map(sql).join(";\n")
 
 exports.fhir_drop_storage_sql = fhir_drop_storage_sql
@@ -145,10 +157,12 @@ exports.fhir_truncate_storage = (plv8, query)->
   resource_type = query.resourceType
   nm = namings.table_name(plv8, resource_type)
   hx_nm = namings.history_table_name(plv8, nm)
+  refs_nm = namings.reference_table_name(plv8, resource_type)
 
   if pg_meta.table_exists(plv8, nm)
     utils.exec(plv8, truncate: sql.q(nm))
     utils.exec(plv8, truncate: sql.q(hx_nm))
+    utils.exec(plv8, truncate: sql.q(refs_nm))
     outcome.truncate_storage_done(resource_type)
   else
     outcome.unknown_type(resource_type)
