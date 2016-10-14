@@ -286,6 +286,9 @@ To build search query we need to
         if expr.offset?
           hsql.offset = expr.offset
 
+        if isFinite(expr.offset)
+          hsql.offset = expr.offset
+
         if expr.joins
           hsql.join = lang.mapcat expr.joins, (x)->
             mk_join(plv8, alias, next_alias, x)
@@ -320,6 +323,12 @@ implementation based on searchType
 
     order_hsql = (tbl, params)->
       for meta in params.map((x)-> x[1])
+        # FIXME: inconsistent situation with many params
+        # just take first, it unsorted anyway
+        if ! meta.searchType && meta[0] && meta[0] == '$param'
+          meta = meta[1]
+        if ! meta.searchType
+          throw new Error("Empty search type", params)
         h = get_search_module(meta.searchType)
         unless h.order_expression
           throw new Error("Search type does not exports order_expression fn: [#{meta.searchType}] #{JSON.stringify(meta)}")
