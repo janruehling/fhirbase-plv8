@@ -105,7 +105,7 @@ fhir_drop_storage = (plv8, query)->
   resource_type = query.resourceType
   nm = namings.table_name(plv8, resource_type)
   unless pg_meta.table_exists(plv8, nm)
-    {status: 'error', message: "Table #{nm} not exists"}
+    {status: 'error', message: "Table #{nm} does not exist"}
   else
     plv8.execute(fhir_drop_storage_sql(plv8, query))
     {status: 'ok', message: "Table #{nm} was dropped"}
