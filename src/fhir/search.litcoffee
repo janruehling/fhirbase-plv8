@@ -336,6 +336,10 @@ implementation based on searchType
 
     is_nested_order = (params)->
       for meta in params.map((x)-> x[1])
+        if ! meta.searchType && meta[0] && meta[0] == '$param'
+          meta = meta[1]
+        if ! meta.searchType
+          throw new Error("Empty search type", params)
         name = meta.name
         if name.split(".").length > 1
           return true
@@ -343,6 +347,10 @@ implementation based on searchType
 
     nested_table = (params)->
       for meta in params.map((x)-> x[1])
+        if ! meta.searchType && meta[0] && meta[0] == '$param'
+          meta = meta[1]
+        if ! meta.searchType
+          throw new Error("Empty search type", params)
         name = meta.name
         if name.split(".").length > 1
           return name.split(".")[0]
