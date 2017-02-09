@@ -1,9 +1,10 @@
 crud = require('./crud')
 search = require('./search')
+history = require('./history')
 
 RES_TYPE_RE = "([A-Za-z]+)"
 ID_RE = "([A-Za-z0-9\\-]+)"
-QUERY_STRING_RE = "([A-Za-z0-9 &=_-]+)"
+QUERY_STRING_RE = "(.*)"
 
 strip = (obj)->
   res = {}
@@ -77,7 +78,7 @@ HANDLERS = [
   }
   {
     name: 'Search and conditional operations'
-    test: new RegExp("^/?#{RES_TYPE_RE}/?\\?#{QUERY_STRING_RE}/?$")
+    test: new RegExp("^/?#{RES_TYPE_RE}/?\\?#{QUERY_STRING_RE}$")
     GET: (match, entry)->
       type: 'search'
       resourceType: match[1]
@@ -138,6 +139,7 @@ makePlan = (bundle) ->
         when 'read' then 4 # GET
         when 'vread' then 4 # GET
         when 'search' then 4 # GET
+        when 'history' then 4 # GET
 
     aa = number(a)
     bb = number(b)
@@ -198,6 +200,13 @@ executePlan = (plv8, plan) ->
       when "search"
         search.fhir_search(plv8,
           resourceType: action.resourceType, queryString: action.queryString)
+      when 'history'
+        if action.resourceType && action.id
+          history.fhir_resource_history(plv8, resourceType: action.resourceType, id: action.id)
+        else if action.resourceType
+          history.fhir_resource_type_history(plv8, resourceType: action.resourceType)
+        else
+          "request.type is not supported - \n#{JSON.stringify(action)}"
       else
         "request.type is not supported - \n#{JSON.stringify(action)}"
 
