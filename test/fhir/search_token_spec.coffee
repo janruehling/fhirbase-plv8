@@ -23,7 +23,7 @@ resource =
     {system: 'ssn', value: '1'}
     {system: 'mrn', value: '2'}
   ]
-  value: 
+  value:
     value: 10
     unit: "mg"
     system: "http://unitsofmeasure.org"

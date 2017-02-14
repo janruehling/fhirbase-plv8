@@ -14,10 +14,10 @@
       "location.name" : "resource->>'name'"
     }
 
-    exports.order_expression = (tbl, meta)->
-      elem = meta.name
+    exports.order_expression = (tbl, metas)->
+      elem = metas[0].name
       expression = tbl+"."+paths[elem]
-      if meta.operator == "desc"
+      if metas[0].operator == "desc"
         expression += " DESC"
       ['$raw', expression]
 

@@ -156,24 +156,25 @@ To build search query we need to
 
     normalize_operators = (expr)->
       forms =
-        $param: (meta, value)->
-          handler = SEARCH_TYPES_TABLE[meta.searchType]
+        $param: (metas, value)->
+          for meta in metas
+            handler = SEARCH_TYPES_TABLE[meta.searchType]
 
-          unless handler
-            throw new Error("NORMALIZE: Not registered search type [#{meta.searchType}]")
+            unless handler
+              throw new Error("NORMALIZE: Not registered search type [#{meta.searchType}]")
 
-          unless handler.normalize_operator
-            throw new Error("NORMALIZE: Not implemented noramalize_operator for [#{meta.searchType}]")
+            unless handler.normalize_operator
+              throw new Error("NORMALIZE: Not implemented noramalize_operator for [#{meta.searchType}]")
 
-          meta.operator = if meta.modifier == 'asc' or meta.modifier == 'desc'
-              meta.modifier
-            else
-              handler.normalize_operator(meta, value)
+            meta.operator = if meta.modifier == 'asc' or meta.modifier == 'desc'
+                meta.modifier
+              else
+                handler.normalize_operator(meta, value)
 
-          delete meta.modifier
-          delete value.prefix
+            delete meta.modifier
+            delete value.prefix
 
-          ['$param', meta, value]
+          ['$param', metas, value]
 
       lisp.eval_with(forms, expr)
 
@@ -205,7 +206,7 @@ To build search query we need to
         ordering = order_hsql(alias, expr.sort)
 
       hsql =
-        select: ':*'
+        select: sql.raw(alias + '.*')
         from: ['$alias', ['$q', "#{namings.table_name(plv8, expr.query)}"], alias]
         where: expr.where
         order: ordering
@@ -219,18 +220,20 @@ To build search query we need to
     _search_sql = (plv8, idx, query)->
         unless query.resourceType
           throw new Error("Expected query.resourceType attribute")
-
         next_alias = mk_alias()
-
         alias = next_alias()
-
         expr = parser.parse(query.resourceType, query.queryString || "")
         expr = expand.expand(idx, expr)
         expr = normalize_operators(expr)
-
+        nested_order = expr.sort && is_nested_order(expr.sort)
         table_name = namings.table_name(plv8, expr.query)
-        expr.where = to_hsql(alias, expr.where)
+        if nested_order == true
+            for where_elem in expr.where
+                if Array.isArray(where_elem)
+                    param_obj = where_elem[1]
+                    param_obj[0].isNested = true;
 
+        expr.where = to_hsql(alias, expr.where)
         if expr.ids
           expr = merge_where(expr, ['$in', ":#{alias}.id", expr.ids])
 
@@ -272,10 +275,10 @@ To build search query we need to
             order: ordering
         else
           hsql =
-            select: ':*'
-            from: ['$alias', ['$q', "#{namings.table_name(plv8, expr.query)}"], alias]
-            where: expr.where
-            order: ordering
+              select: sql.raw(alias + '.*')
+              from: ['$alias', ['$q', "#{namings.table_name(plv8, expr.query)}"], alias]
+              where: expr.where
+              order: ordering
 
         if expr.count != null || expr.page != null
           hsql.limit = expr.count || DEFAULT_RESOURCES_PER_PAGE
@@ -313,29 +316,28 @@ implementation based on searchType
     to_hsql = (tbl, expr)->
       forms =
         $param: (left, right)->
-          h = get_search_module(left.searchType)
+          h = get_search_module(left[0].searchType)
           unless h.handle
-            throw new Error("Search type does not exports handle fn: [#{left.searchType}] #{JSON.stringify(left)}")
+            throw new Error("Search type does not exports handle fn: [#{left[0].searchType}] #{JSON.stringify(left)}")
           h.handle(tbl, left, right)
       lisp.eval_with(forms, expr)
 
     exports.to_hsql = to_hsql
 
     order_hsql = (tbl, params)->
-      for meta in params.map((x)-> x[1])
-        # FIXME: inconsistent situation with many params
-        # just take first, it unsorted anyway
-        if ! meta.searchType && meta[0] && meta[0] == '$param'
-          meta = meta[1]
-        if ! meta.searchType
+      for metas in params.map((x)-> x[1])
+        meta = metas[0]
+        searchType = meta.searchType
+        if !searchType
           throw new Error("Empty search type", params)
-        h = get_search_module(meta.searchType)
+        h = get_search_module(searchType)
         unless h.order_expression
-          throw new Error("Search type does not exports order_expression fn: [#{meta.searchType}] #{JSON.stringify(meta)}")
-        h.order_expression(tbl, meta)
+          throw new Error("Search type does not exports order_expression fn: [#{searchType}] #{JSON.stringify(metas)}")
+        h.order_expression(tbl, metas)
 
     is_nested_order = (params)->
-      for meta in params.map((x)-> x[1])
+      for metas in params.map((x)-> x[1])
+        meta = metas[0]
         if ! meta.searchType && meta[0] && meta[0] == '$param'
           meta = meta[1]
         if ! meta.searchType
@@ -346,7 +348,8 @@ implementation based on searchType
       return false
 
     nested_table = (params)->
-      for meta in params.map((x)-> x[1])
+      for metas in params.map((x)-> x[1])
+        meta = metas[0]
         if ! meta.searchType && meta[0] && meta[0] == '$param'
           meta = meta[1]
         if ! meta.searchType
@@ -409,7 +412,7 @@ This tricky function converts chained parameters into SQL joins.
       current_alias = base
       res = for param in chained[1..-2]
         meta = param[1]
-        joined_resource = meta.join
+        joined_resource = meta[0].join
         joined_table = namings.table_name(plv8, joined_resource)
         join_alias = next_alias()
         value = {value: ":'#{joined_resource}/' || #{join_alias}.id"}
@@ -448,6 +451,7 @@ we just strip limit, offset, order and rewrite select clause:
     get_count = (plv8, honey, query_obj) ->
       if !query_obj.total_method || query_obj.total_method is "exact"
         query_obj.total_method = "exact"
+
         utils.exec(plv8, countize_query(honey))[0].count
       else if query_obj.total_method is "estimated"
         sql_query= sql(honey)
@@ -480,15 +484,12 @@ awaiting query.resourceType and query.name - name of parameter
     expand_parameter = (plv8, query)->
       idx = ensure_index(plv8)
       expr = expand.expand(idx, ['$param', query])
-      if lang.isArray(expr) and expr[0] == '$or'
-        expr[1..-1].map((x)-> x[1])
-      else if expr[0] == '$param'
-        [expr[1]]
+      if expr[0] == '$param'
+        expr[1]
       else
         throw new Error("Indexing: not supported #{JSON.stringify(expr)}")
 
     ensure_handler = (plv8, metas)->
-
       uniqtypes = lang.uniq(metas.map((x)-> x.searchType))
       if uniqtypes.length > 1
         throw new Error("We do not support such case #{JSON.stringify(uniqtypes)}")
@@ -496,9 +497,9 @@ awaiting query.resourceType and query.name - name of parameter
       h = SEARCH_TYPES_TABLE[uniqtypes[0]]
 
       unless h
-        throw new Error("Unsupported search type [#{meta.searchType}] #{JSON.stringify(meta)}")
+        throw new Error("Unsupported search type [#{uniqtypes[0]}] #{JSON.stringify(metas)}")
       unless h.index
-        throw new Error("Search type does not exports index [#{meta.searchType}] #{JSON.stringify(meta)}")
+        throw new Error("Search type does not exports index [#{uniqtypes[0]}] #{JSON.stringify(metas)}")
 
       h
 
