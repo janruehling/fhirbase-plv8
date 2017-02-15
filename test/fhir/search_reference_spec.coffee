@@ -39,6 +39,10 @@ describe "extract_as_reference", ->
     testCase.specs.forEach (spec)->
       it JSON.stringify(spec.path), ->
         res = search.fhir_extract_as_reference(
-          {}, testCase.resource, spec.path, spec.elementType
+          {}, testCase.resource,
+          [
+            {path: ['Task', 'unknownPath'], elementType: spec.elementType}
+            {path: spec.path, elementType: spec.elementType}
+          ]
         )
         assert.deepEqual(res, spec.result)
