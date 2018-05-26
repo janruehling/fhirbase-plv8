@@ -101,6 +101,9 @@ specials =
   summary: (query, left, right)->
     query.summary = true
     query
+  offset: (query, left, right)->
+    query.offset = parseInt(right)
+    query
   id: (query, left, right)->
     ids = right.split(',').map((identifier)->
       i = identifier.trim()

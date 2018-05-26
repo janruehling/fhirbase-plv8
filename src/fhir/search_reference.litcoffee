@@ -18,6 +18,7 @@ Only equality operator is implemented.
     lang = require('../lang')
     search_token = require('./search_token')
     search_common = require('./search_common')
+    search_nested = require('./search_nested')
 
     TODO = -> throw new Error("TODO")
 
@@ -116,7 +117,10 @@ Only equality operator is implemented.
         ['$cast', val, ":text[]"]]
 
     exports.order_expression = (tbl, metas)->
-      search_token.order_expression(tbl, metas)
+      if metas[0].name.split(".").length>1
+        search_nested.order_expression(tbl, metas)
+      else
+        search_token.order_expression(tbl, metas)
 
     exports.index = (plv8, metas)->
       meta = metas[0]

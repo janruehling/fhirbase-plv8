@@ -55,6 +55,10 @@ appropriate elements from resource by path
 
     DEFAULT_RESOURCES_PER_PAGE = 10
 
+    special_resource_types = {
+      "practitioner"  : "'participant'",
+      "location" : "'location'->0->'location'"
+    }
 This is main function:
 
 @param query [Object]
@@ -216,17 +220,20 @@ To build search query we need to
     _search_sql = (plv8, idx, query)->
         unless query.resourceType
           throw new Error("Expected query.resourceType attribute")
-
         next_alias = mk_alias()
-
         alias = next_alias()
-
         expr = parser.parse(query.resourceType, query.queryString || "")
         expr = expand.expand(idx, expr)
         expr = normalize_operators(expr)
+        nested_order = expr.sort && is_nested_order(expr.sort)
+        table_name = namings.table_name(plv8, expr.query)
+        if nested_order == true
+            for where_elem in expr.where
+                if Array.isArray(where_elem)
+                    param_obj = where_elem[1]
+                    param_obj[0].isNested = true;
 
         expr.where = to_hsql(alias, expr.where)
-
         if expr.ids
           expr = merge_where(expr, ['$in', ":#{alias}.id", expr.ids])
 
@@ -253,20 +260,37 @@ To build search query we need to
               ]
             )
 
-        if expr.sort
+        if expr.sort && !is_nested_order(expr.sort)
           ordering = order_hsql(alias, expr.sort)
 
-        hsql =
-          select: sql.raw(alias + '.*')
-          from: ['$alias', ['$q', "#{namings.table_name(plv8, expr.query)}"], alias]
-          where: expr.where
-          order: ordering
+        if expr.sort && is_nested_order(expr.sort)
+          nested_table_alias = next_alias()
+          ordering = order_hsql(nested_table_alias, expr.sort)
+          nested_order_query = get_nested_order_query(expr, alias, nested_table_alias, table_name)
+          hsql =
+            select: nested_order_query.select,
+            from: nested_order_query.from,
+            join: nested_order_query.join,
+            where: nested_order_query.where,
+            order: ordering
+        else
+          hsql =
+              select: sql.raw(alias + '.*')
+              from: ['$alias', ['$q', "#{namings.table_name(plv8, expr.query)}"], alias]
+              where: expr.where
+              order: ordering
 
         if expr.count != null || expr.page != null
           hsql.limit = expr.count || DEFAULT_RESOURCES_PER_PAGE
 
-        if expr.page != null
+        if expr.page?
           hsql.offset = (expr.count || DEFAULT_RESOURCES_PER_PAGE) * expr.page
+
+        if expr.offset?
+          hsql.offset = expr.offset
+
+        if isFinite(expr.offset)
+          hsql.offset = expr.offset
 
         if expr.joins
           hsql.join = lang.mapcat expr.joins, (x)->
@@ -302,13 +326,81 @@ implementation based on searchType
 
     order_hsql = (tbl, params)->
       for metas in params.map((x)-> x[1])
-        searchType = metas[0].searchType
+        meta = metas[0]
+        searchType = meta.searchType
         if !searchType
           throw new Error("Empty search type", params)
         h = get_search_module(searchType)
         unless h.order_expression
           throw new Error("Search type does not exports order_expression fn: [#{searchType}] #{JSON.stringify(metas)}")
         h.order_expression(tbl, metas)
+
+    is_nested_order = (params)->
+      for metas in params.map((x)-> x[1])
+        meta = metas[0]
+        if ! meta.searchType && meta[0] && meta[0] == '$param'
+          meta = meta[1]
+        if ! meta.searchType
+          throw new Error("Empty search type", params)
+        name = meta.name
+        if name.split(".").length > 1
+          return true
+      return false
+
+    nested_table = (params)->
+      for metas in params.map((x)-> x[1])
+        meta = metas[0]
+        if ! meta.searchType && meta[0] && meta[0] == '$param'
+          meta = meta[1]
+        if ! meta.searchType
+          throw new Error("Empty search type", params)
+        name = meta.name
+        if name.split(".").length > 1
+          return name.split(".")[0]
+
+    resource_type = (table_name)->
+      if special_resource_types[table_name]
+        return special_resource_types[table_name]
+      return "'"+table_name+"'"
+
+    build_join_part = (table, nested_table, main_table_alias, nested_table_alias)->
+      switch table
+        when "appointment"
+          return [[['$raw', "#{nested_table} AS #{nested_table_alias}"],['$raw', "#{nested_table_alias}.id = subelem_id"]]]
+        when "encounter"
+          resource = resource_type(nested_table)
+          if resource == "'participant'"
+            return [[['$raw', "#{nested_table} AS #{nested_table_alias}"],['$raw', "#{nested_table_alias}.id = subelem_id"]]]
+          else
+            return [[['$raw', "#{table} AS #{main_table_alias}"], ['$raw', "#{nested_table_alias}.id=split_part((\"#{main_table_alias}\".resource->#{resource}->>'reference'), '/', 2)"]]]
+
+    build_from_part = (table, nested_table, main_table_alias, nested_table_alias)->
+      switch table
+        when "appointment"
+          return ['$raw', "(SELECT split_part((json_array_elements((\"#{table}\".resource->'participant')::json)->'actor'->>'reference')::text, '/', 2)::text as subelem_id, \"#{table}\".* FROM \"#{table}\") AS #{main_table_alias}"]
+        when "encounter"
+          resource = resource_type(nested_table)
+          if resource == "'participant'"
+            return ['$raw', "(SELECT split_part((json_array_elements((\"#{table}\".resource->'participant')::json)->'individual'->>'reference')::text, '/', 2)::text as subelem_id, \"#{table}\".* FROM \"#{table}\") AS #{main_table_alias}"]
+          else
+            return ['$alias', ['$q', "#{nested_table}"], nested_table_alias]
+
+    get_nested_order_query = (expr, main_table_alias, nested_table_alias, table_name)->
+      nested_table_name = nested_table(expr.sort)
+      if table_name == "appointment"
+        {
+            select: ":#{main_table_alias}.*",
+            from: build_from_part(table_name, nested_table_name, main_table_alias, nested_table_alias),
+            join: build_join_part(table_name, nested_table_name, main_table_alias, nested_table_alias),
+            where: expr.where
+        }
+      else if table_name == "encounter"
+        {
+            select: ":#{main_table_alias}.*",
+            from: build_from_part(table_name, nested_table_name, main_table_alias, nested_table_alias),
+            join: build_join_part(table_name, nested_table_name, main_table_alias, nested_table_alias),
+            where: expr.where
+        }
 
 
 ###  Handling chained parameters

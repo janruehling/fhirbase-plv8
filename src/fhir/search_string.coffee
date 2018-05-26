@@ -96,7 +96,7 @@ exports.fhir_sort_as_string = (plv8, resource, metas)->
   res && res.toLowerCase()
 
 exports.fhir_sort_as_string.plv8_signature =
-  arguments: ['json', 'json']
+  arguments: ['json', 'json', 'text']
   returns: 'text'
   immutable: true
 

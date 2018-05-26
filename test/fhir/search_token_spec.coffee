@@ -89,11 +89,7 @@ specs = [
 describe "extract_as_token", ->
   specs.forEach (spec)->
     it JSON.stringify(spec.path), ->
-      metas = [
-        {path: ['Resource', 'unknownPath'], elementType: spec.elementType},
-        {path: spec.path, elementType: spec.elementType}
-      ]
-      res = search.fhir_extract_as_token({}, resource, metas)
+      res = search.fhir_extract_as_token({}, resource, spec.path, spec.elementType)
       assert.deepEqual(res, spec.result)
-      order = search.fhir_sort_as_token({}, resource, metas)
+      order = search.fhir_sort_as_token({}, resource, spec.path, spec.elementType)
       assert.deepEqual(order, spec.order)

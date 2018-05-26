@@ -40,9 +40,14 @@ Now we support only simple date data-types - i.e. date, dateTime and instant.
 
     extract_op_expr = (opname, metas)->
       m = metas.map((x)-> {path: x.path, elementType: x.elementType})
-      ["$#{opname}"
-       ['$cast', ':resource', ':json']
-       ['$cast', ['$quote', JSON.stringify(m)], ':json']]
+      if metas[0].isNested?
+       ["$#{opname}"
+        ['$cast', ':tbl1.resource', ':json']
+        ['$cast', ['$quote', JSON.stringify(m)], ':json']]
+      else
+       ["$#{opname}"
+        ['$cast', ':resource', ':json']
+        ['$cast', ['$quote', JSON.stringify(m)], ':json']]
 
     extract_lower_expr = (metas)->
       extract_op_expr('fhir_extract_as_epoch_lower', metas)
@@ -244,8 +249,10 @@ Function to extract element from resource as epoch.
       if value
         if ['date', 'dateTime', 'instant'].indexOf(value.elementType) > -1
           epoch(plv8, date.to_upper_date(value.value))
-        else if value.elementType == 'Period'
+        else if value.elementType == 'Period' && value.value.end
           epoch(plv8, date.to_upper_date(value.value.end))
+        else if value.elementType == 'Period' && !value.value.end
+          epoch(plv8, date.to_upper_date("3999-12-31T23:59:59Z" ))
         else
           throw new Error("fhir_extract_as_epoch: Not implemented for #{value.elementType}")
       else

@@ -265,15 +265,14 @@ describe 'Integration', ->
       )
 
     it 'should rollback (#112)', ->
-      ['id1', 'id2', 'id3'].forEach (id) ->
-        json_call('fhir_create_resource', {
-          allowId: true,
-          resource:
-            id: id,
-            resourceType: "Patient",
-            name: [{"given": ["John"]}]
-          }
-        )
+      json_call(
+        'fhir_create_resource',
+        allowId: true,
+        resource:
+          id: "id1",
+          resourceType: "Patient",
+          name: [{"given": ["Patient 1"]}]
+      )
 
       bundle =
         type: "transaction",
@@ -287,7 +286,7 @@ describe 'Integration', ->
           },
           {
             request:
-              url: '/Patient/?given=John',
+              url: '/Patient/id2',
               method: "DELETE"
           }
         ]
@@ -295,7 +294,7 @@ describe 'Integration', ->
       match(
         json_call('fhir_transaction', bundle),
         resourceType: 'OperationOutcome'
-        issue: [{severity: 'error', code: '412', diagnostics: 'Precondition Failed error indicating the client\'s criteria were not selective enough. undefined'}]
+        issue: [{severity: 'error', code: 'not-found', diagnostics: 'Resource Id "id2" does not exist'}]
       )
 
       match(
